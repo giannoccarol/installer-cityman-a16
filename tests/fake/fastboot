@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Fake fastboot for tests/run-flow-tests.sh. State lives in $FAKE_STATE.
+S=${FAKE_STATE:?}
+echo "fastboot $*" >> "$S/calls.log"
+state=$(cat "$S/state")
+case "$1" in
+    devices)
+        [ "$state" = fastboot ] && printf 'f24efc25\tfastboot\n'
+        exit 0 ;;
+    boot)
+        [ "$state" = fastboot ] || { echo "< waiting for any device >" >&2; exit 1; }
+        [ -f "$2" ] || { echo "cannot load '$2'" >&2; exit 1; }
+        sha256sum "$2" | cut -c1-64 > "$S/booted-image"
+        echo booting > "$S/state"; echo 2 > "$S/countdown"
+        echo "Sending 'boot.img' (18096 KB)  OKAY" >&2; echo "Booting  OKAY" >&2
+        exit 0 ;;
+    flash)
+        [ "$state" = fastboot ] || exit 1
+        [ -f "$3" ] || { echo "cannot load '$3'" >&2; exit 1; }
+        echo "$2 $(sha256sum "$3" | cut -c1-64)" >> "$S/flashed"
+        echo "Writing '$2'  OKAY" >&2
+        exit 0 ;;
+esac
+echo "fake fastboot: unsupported $*" >&2
+exit 1

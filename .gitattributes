@@ -1,0 +1,6 @@
+# Windows scripts need CRLF; the scripts run on the phone need LF.
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+*.sh  text eol=lf
+*.md  text eol=lf
+checksums.sha256 text eol=lf

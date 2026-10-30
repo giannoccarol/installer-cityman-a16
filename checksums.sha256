@@ -1,0 +1,24 @@
+# SHA-256 of every file installer.ps1 sends to the phone or to EFIESP.
+# The installer stops if a file does not match.
+#
+# Official Android4Lumia950 installer, branch cityman-temp, commit
+# 5c215fda5daf73866a93dfad3b6473253552dfe5 (2025-10-04, "Fix TWRP").
+ed0e23ce0aa7a36cd9260b478deb6e767261b0a1755ec1b518047bf0028903db  official/DATA/BCD
+108b070195f59aac27ddd0ee1d2a806ec1e267d22c2a763d95dcac9c72912a18  official/DATA/bootshim.efi
+f8ce187212ff8efa6415b5ec066742233dc7a8628341a48ab1adae4af7e96e4b  official/DATA/Stage2.efi
+107b5c160343fe008244b1c20a0723807cbcca8bcc765c14ee8c645b9953c892  official/DATA/developermenu.efi
+392cabea0594c0b37f3986527ad95b6b480a554a81b7621587f9c1f11cf2fa6f  official/DATA/emmc_appsboot.mbn
+74bb66f2dd0630fdcf9a12dee3090574c907523b3c7f62d4685d7c006b6c96be  official/DATA/modem.img
+02a9c3105f50033dbb72b9948befe9be74299ee2ca1b09ea594e40ad168b9704  official/DATA/twrp.img
+9888ddea9f943dc6c2b62e5d7a7b2db825f02e26380314532c3c008a9edf9934  official/ui/boot.ums.connected.bmpx
+108482d81b53f845f759a1a45bea24bfe31482839ba2bc052a1945123e0d6377  official/ui/boot.ums.disconnected.bmpx
+214d7c2edd85d918c18b1ec95e91519f07c34edc3540d4e22da4f34dd4fc78f2  official/ui/boot.ums.waiting.bmpx
+# Shell scripts: hash of the text with LF line endings (a git checkout may add CR).
+3d0be210dcaf54383bcf02f276eef79741de58ab6a868c876d81fa55d9f6b8a7  official/partition.sh
+b5ac4ffcbf22f3da43d7a5896c55d0e808d0c0da3cebde76fe44a93c93b7ab15  official/provision.sh
+# partition.sh after the exact-name fix applied by installer.ps1 (see README).
+4037483f9073a1b3a31c4b468cafc34eef62bc6d51f423f8d6e35ef6f4317185  official/partition.sh+exact-name-fix
+#
+# Android 16 TWRP (twrp-cityman-a16.img, 2026-10-30). Add a line here when a new
+# TWRP build is released.
+35f4cd822caec6b5cd8b981b86f6e78169c318bca470d2e1b6bb4c5b319d8233  twrp-cityman-a16.img

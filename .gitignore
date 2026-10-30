@@ -1,0 +1,10 @@
+# Downloaded or user-provided files (not distributed with this repository)
+/official/
+/downloads/
+/work/
+/backups/
+/logs/
+/rom/*
+!/rom/README.txt
+/twrp/*
+!/twrp/README.txt

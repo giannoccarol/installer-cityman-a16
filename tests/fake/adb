@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# Fake adb for tests/run-flow-tests.sh: a Lumia 950 XL with LK and TWRP.
+# State lives in $FAKE_STATE: state (fastboot|booting|recovery|sideload|device|off).
+S=${FAKE_STATE:?}
+echo "adb $*" >> "$S/calls.log"
+state=$(cat "$S/state")
+SERIAL=f24efc25
+PROV="APDP DBI DDR DPO DPP LIMITS MODEM_FS1 MODEM_FS2 MODEM_FSC MODEM_FSG MSADP SEC SSD UEFI_BS_NV UEFI_RT_NV"
+need_recovery() { [ "$state" = recovery ] || { echo "error: device not in recovery ($state)" >&2; exit 1; }; }
+count() { local n=0; [ -f "$S/n-$1" ] && n=$(cat "$S/n-$1"); n=$((n + 1)); echo $n > "$S/n-$1"; echo $n; }
+
+case "$1" in
+    version) echo "Android Debug Bridge version 1.0.41"; echo "Version 35.0.2-fake"; exit 0 ;;
+    start-server) exit 0 ;;
+    devices)
+        if [ "$state" = booting ]; then
+            c=$(($(cat "$S/countdown") - 1)); echo $c > "$S/countdown"
+            [ $c -le 0 ] && { echo recovery > "$S/state"; state=recovery; }
+        fi
+        echo "List of devices attached"
+        case "$state" in recovery|sideload|device) printf '%s\t%s\n' $SERIAL "$state" ;; esac
+        echo; exit 0 ;;
+    push)
+        need_recovery; mkdir -p "$S/remote"; cp "$2" "$S/remote/$(basename "$3")"
+        echo "$2: 1 file pushed."; exit 0 ;;
+    pull)
+        need_recovery; b=$(basename "$2" .bin)
+        printf 'content-%s' "$b" > "$3"; echo "$2: 1 file pulled."; exit 0 ;;
+    reboot)
+        if [ "$2" = bootloader ]; then echo fastboot > "$S/state"; else echo off > "$S/state"; fi
+        exit 0 ;;
+    sideload)
+        [ "$state" = sideload ] || { echo "adb: sideload connection failed: no devices/emulators found" >&2; exit 1; }
+        echo "sideload $(sha256sum "$2" | cut -c1-64)" >> "$S/installed"
+        echo "serving: '$2'  (~100%)"
+        echo recovery > "$S/state"
+        # TWRP often ends the transfer with this error even when the install worked.
+        echo "adb: failed to read command: Success" >&2
+        exit 1 ;;
+    shell) shift; cmd="$*" ;;
+    *) echo "fake adb: unsupported $*" >&2; exit 1 ;;
+esac
+
+need_recovery
+case "$cmd" in
+    'echo cityman-shell-ok') echo cityman-shell-ok ;;
+    'twrp print cityman-twrp-ready')
+        # First call: TWRP GUI not up yet.
+        if [ "$(count ors)" -eq 1 ]; then
+            echo "TWRP does not appear to be running. Waiting for TWRP to start . . ."
+        else
+            echo "cityman-twrp-ready"; echo "Done processing script file"
+        fi ;;
+    'twrp sideload')
+        # First attempt is lost (the race seen on the phone), the second works.
+        if [ "$(count sideload)" -ge 2 ]; then echo sideload > "$S/state"; fi
+        sleep 60 ;;
+    'twrp format data'|'twrp wipe cache'|'twrp wipe dalvik')
+        echo "${cmd#twrp }" >> "$S/wiped"
+        echo "Formatting..."; echo "Done processing script file" ;;
+    "pkill -f 'twrp [p]rint'") ;;
+    'parted /dev/block/mmcblk0 unit s print') echo "Model: MMC 032G32 (sd/mmc)"; echo "Number  Start  End  Size  Name" ;;
+    'cd / && yes y | bash /tmp/partition.sh')
+        grep -qF 'grep -E "[[:space:]]${androidPartitions[i]}\$"' "$S/remote/partition.sh" \
+            || { echo "partition.sh WITHOUT the fix" ; exit 0; }
+        ! grep -q $'\r' "$S/remote/partition.sh" || { echo "partition.sh has CR"; exit 0; }
+        echo "Creating Android partitions"; touch "$S/partitioned" ;;
+    'cd / && bash /tmp/provision.sh') touch "$S/provisioned" ;;
+    'bash /tmp/cityman-a16-helper.sh '*)
+        [ -f "$S/remote/cityman-a16-helper.sh" ] || { echo "bash: /tmp/cityman-a16-helper.sh: not found"; exit 0; }
+        set -- ${cmd#bash /tmp/cityman-a16-helper.sh }
+        case "$1" in
+            check-windows) echo "RESULT=OK:Data" ;;
+            backup)
+                for p in $PROV; do echo "SHA $(printf 'content-%s' $p | sha256sum | cut -c1-64) $p.bin"; done
+                echo RESULT=OK ;;
+            check-android)
+                if [ -n "$2" ] && [ -n "${FAKE_LK_BAD:-}" ] && [ ! -f "$S/lk-fixed" ]; then
+                    echo "RESULT=FAIL:LK: emmc_appsboot.mbn is missing or different in the aboot partition"
+                else echo RESULT=OK; fi ;;
+            put-lk) touch "$S/lk-fixed"; echo RESULT=OK ;;
+            pre-provision) echo RESULT=OK ;;
+            check-provision) echo RESULT=OK ;;
+            installed-version) echo "RESULT=OK:${FAKE_INSTALLED:-sdk=36 lineage=23.2 device=cityman}" ;;
+            data-check) echo RESULT=OK:formatted ;;
+            sideload-result)
+                echo "LOG script succeeded: result was [1.000000]"; echo "LOG Updater process ended with RC=0"; echo RESULT=OK ;;
+            boot-sha)
+                h=$(unzip -p "$FAKE_ROM" boot.img | head -c "$2" | sha256sum | cut -c1-64)
+                [ -n "${FAKE_BOOT_BAD:-}" ] && h=0000000000000000000000000000000000000000000000000000000000000000
+                echo "RESULT=OK:$h" ;;
+            *) echo "RESULT=FAIL:unknown helper command '$1'" ;;
+        esac ;;
+    *) echo "fake adb: unsupported shell command: $cmd" ;;
+esac
+exit 0
