@@ -67,6 +67,11 @@ case "$cmd" in
         echo "Creating Android partitions"; touch "$S/partitioned" ;;
     'cd / && bash /tmp/provision.sh') touch "$S/provisioned" ;;
     'bash /tmp/cityman-a16-helper.sh '*)
+        # The first FAKE_HELPER_DROP helper calls lose the connection, as when
+        # TWRP restarts its USB connection while it starts.
+        if [ "${FAKE_HELPER_DROP:-0}" -gt 0 ] && [ "$(count drop)" -le "$FAKE_HELPER_DROP" ]; then
+            echo "error: closed" >&2; exit 1
+        fi
         [ -f "$S/remote/cityman-a16-helper.sh" ] || { echo "bash: /tmp/cityman-a16-helper.sh: not found"; exit 0; }
         set -- ${cmd#bash /tmp/cityman-a16-helper.sh }
         case "$1" in

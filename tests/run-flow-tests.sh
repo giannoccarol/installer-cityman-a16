@@ -155,6 +155,21 @@ rm -rf "$REPO/backups"
 run resume-bad device '' -Mode Update -Resume Modem
 check resume-bad 'exit code 1, phone untouched' '[ "$(cat rc)" = 1 ] && ! grep -qE "fastboot boot|reboot" calls.log'
 
+# 16. Full install where adb loses the connection to the official TWRP once.
+rm -rf "$T/efiesp"; mkdir -p "$T/efiesp/EFI/Microsoft/BOOT" "$T/efiesp/Windows/System32/BOOT"; echo x > "$T/efiesp/EFI/Microsoft/BOOT/BCD"
+FAKE_HELPER_DROP=1 run full-drop fastboot '\nYES\nERASE\n' -Mode Full -EfiEsp "$T/efiesp" -OfficialDir "$T/official"
+check full-drop 'exit code 0 after reconnecting' '[ "$(cat rc)" = 0 ] && [ "$(cat installed)" = "sideload $ROM_SHA" ]'
+check full-drop 'check-windows retried' '[ "$(grep -c "helper.sh check-windows" calls.log)" = 2 ] && grep -q "Reconnecting and trying again" out.txt'
+check full-drop 'TWRP interface waited for before check-windows' 'awk "/twrp print/{o=1} /check-windows/{exit !o}" calls.log'
+rm -rf "$REPO/backups"
+
+# 17. Full install where the connection never comes back: stops, nothing erased, says how to resume.
+rm -rf "$T/efiesp"; mkdir -p "$T/efiesp/EFI/Microsoft/BOOT" "$T/efiesp/Windows/System32/BOOT"; echo x > "$T/efiesp/EFI/Microsoft/BOOT/BCD"
+FAKE_HELPER_DROP=99 run full-nodev fastboot '\nYES\nERASE\n' -Mode Full -EfiEsp "$T/efiesp" -OfficialDir "$T/official"
+check full-nodev 'exit code 1, partition.sh not run' '[ "$(cat rc)" = 1 ] && [ ! -f partitioned ]'
+check full-nodev 'message: nothing erased, how to resume' 'grep -q "Nothing was erased" out.txt && grep -q "Resume Partition" out.txt'
+rm -rf "$REPO/backups"
+
 rm -rf "$REPO/work" "$REPO/logs"
 echo "passed: $PASS, failed: $FAIL (outputs in $T)"
 [ $FAIL -eq 0 ]

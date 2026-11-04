@@ -359,17 +359,45 @@ function Send-Helper {
     Send-File $dst $RemoteHelper
 }
 
+# Waits until TWRP is back on adb with a working shell (TWRP restarts its USB
+# connection while it starts, for MTP), then pushes the helper again.
+function Wait-TwrpShell([int]$TimeoutSec) {
+    if (-not (Wait-AdbState @('recovery') $TimeoutSec '')) { return $false }
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    while ((Get-Date) -lt $deadline) {
+        $r = Invoke-Tool $script:Adb @('shell', 'echo cityman-shell-ok') 15
+        if (-not $r.TimedOut -and $r.Out -match 'cityman-shell-ok') {
+            Send-Helper
+            return $true
+        }
+        Start-Sleep -Seconds 3
+    }
+    return $false
+}
+
 # Runs one helper command in TWRP. Returns { Ok; Message; Lines }.
+# Every helper command can be run again safely, so a lost adb connection
+# (no RESULT line, for example "error: closed") is retried.
 function Invoke-Helper([string]$Arguments, [int]$TimeoutSec = 120, [switch]$AllowFail, [switch]$Quiet) {
-    $r = Invoke-Tool $script:Adb @('shell', "bash $RemoteHelper $Arguments") $TimeoutSec
-    if ($r.TimedOut) { Stop-Install "The phone did not answer within $TimeoutSec s ($Arguments)." }
-    $lines = @(Get-Lines $r.Out)
-    $results = @($lines | Where-Object { $_ -match '^RESULT=' })
+    $attempts = 4
+    for ($i = 1; $i -le $attempts; $i++) {
+        $r = Invoke-Tool $script:Adb @('shell', "bash $RemoteHelper $Arguments") $TimeoutSec
+        if ($r.TimedOut) { Stop-Install "The phone did not answer within $TimeoutSec s ($Arguments)." }
+        $lines = @(Get-Lines $r.Out)
+        $results = @($lines | Where-Object { $_ -match '^RESULT=' })
+        if ($results.Count -gt 0) { break }
+        $said = ($r.Out + ' ' + $r.Err).Trim()
+        if ($i -eq $attempts) {
+            Stop-Install "No answer from the phone for '$Arguments' after $attempts attempts. adb said: $said"
+        }
+        Write-Warn "No answer from the phone for '$Arguments' (adb said: $said). Reconnecting and trying again ($($i + 1)/$attempts)..."
+        Start-Sleep -Seconds 5
+        if (-not (Wait-TwrpShell 120)) {
+            Stop-Install "TWRP did not come back on adb after '$Arguments'. adb said: $said"
+        }
+    }
     $other = @($lines | Where-Object { $_ -notmatch '^RESULT=' })
     if (-not $Quiet) { foreach ($l in $other) { Write-Info "  $l" } }
-    if ($results.Count -eq 0) {
-        Stop-Install "No answer from the phone for '$Arguments'. adb said: $(($r.Out + ' ' + $r.Err).Trim())"
-    }
     $last = $results[$results.Count - 1]
     if ($last -match '^RESULT=OK(:(.*))?$') {
         return [pscustomobject]@{ Ok = $true; Message = ("" + $Matches[2]).Trim(); Lines = $other }
@@ -395,7 +423,6 @@ function Wait-Twrp([switch]$NeedOrs) {
         Start-Sleep -Seconds 3
     }
     if (-not $shellOk) { Stop-Install 'TWRP is on adb but its shell does not answer. Reboot the phone to the bootloader and run the installer again.' }
-    Send-Helper
     if ($NeedOrs) {
         $deadline = (Get-Date).AddSeconds(180)
         $ready = $false
@@ -410,6 +437,11 @@ function Wait-Twrp([switch]$NeedOrs) {
             Start-Sleep -Seconds 5
         }
         if (-not $ready) { Stop-Install 'The TWRP command interface did not start within 3 minutes. Reboot the phone to the bootloader and run the installer again.' }
+    }
+    # Once the interface is up TWRP has also restarted its USB connection (MTP):
+    # check the shell again before sending the helper.
+    if (-not (Wait-TwrpShell 120)) {
+        Stop-Install 'TWRP stopped answering on adb while it was starting. Check the cable, reboot the phone to the bootloader and run the installer again.'
     }
     Write-Ok 'TWRP is ready.'
 }
@@ -732,10 +764,19 @@ function Save-PartitionTable([string]$Name) {
 function Invoke-Partitioning {
     Write-Step 'Android partitions (official installer step, in the official TWRP)'
     Invoke-Fastboot @('boot', (Get-OfficialFile 'DATA/twrp.img')) 180
-    Wait-Twrp
-    $found = (Invoke-Helper 'check-windows').Message
-    Save-PartitionTable 'partition-table-before.txt'
-    Backup-Provisioned
+    # Up to the ERASE confirmation nothing is erased: say so, and how to go on.
+    try {
+        Wait-Twrp -NeedOrs
+        $found = (Invoke-Helper 'check-windows').Message
+        Save-PartitionTable 'partition-table-before.txt'
+        Backup-Provisioned
+    } catch {
+        $m = $_.Exception.Message -replace '^INSTALLER: ', ''
+        Stop-Install ("$m`n" +
+            "Nothing was erased: Windows and its partitions are still on the phone, but the phone now starts LK instead of Windows.`n" +
+            "To try again, leave the phone connected and run: installer.bat -Mode Full -Resume Partition`n" +
+            "To go back to Windows instead, start the phone in mass storage mode with WPInternals and copy the files from the EFIESP folder of the first run's backup (backups\cityman-<date>\EFIESP) back to the phone's EFIESP drive.")
+    }
 
     Confirm-Word "These Windows partitions will be DELETED: $found. Windows will no longer start. The Android partitions are created in their place." 'ERASE' "Stopped before partitioning. Nothing was erased. Backups: $($script:BackupDir)"
     Send-File (Join-Parts @($script:WorkDir, 'partition.sh')) '/tmp/partition.sh'

@@ -132,7 +132,17 @@ The first boot takes several minutes, longer after a clean install.
   partition to decide whether the install worked.
 - TWRP is not ready right after boot. The installer waits for `adb shell`, then for
   the `twrp` command interface, and retries `twrp sideload` until adb reports the
-  `sideload` state.
+  `sideload` state. This applies to the official TWRP in the full install too: while
+  it starts, TWRP restarts its USB connection (MTP), and a command sent at that moment
+  can be lost (`error: closed`). Earlier versions sent `check-windows` without waiting
+  for the interface, and the full install could stop with "No answer from the phone
+  for 'check-windows'" before the backup. If adb still loses the connection, the
+  installer reconnects and runs the check again (up to 4 attempts).
+- If a full install stops before you type `ERASE`, nothing was erased, but the phone
+  starts LK instead of Windows. Leave it connected and run
+  `installer.bat -Mode Full -Resume Partition`. To go back to Windows instead, copy the
+  files from `backups\cityman-<date>\EFIESP` (first run) back to the phone's EFIESP
+  in mass storage mode.
 - The TWRP adbd does not return exit codes, so the commands the installer runs on the
   phone ([`device/cityman-a16-helper.sh`](device/cityman-a16-helper.sh)) print a
   `RESULT=OK` or `RESULT=FAIL:` line that the installer reads.
