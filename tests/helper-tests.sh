@@ -81,7 +81,18 @@ if [ -w /tmp ] && [ ! -e /tmp/recovery.log ]; then
     expect 'sideload-result: abort' '^RESULT=FAIL:TWRP reports' sh "$H" sideload-result
     printf 'I:something else\n' > /tmp/recovery.log
     expect 'sideload-result: no result line' '^RESULT=FAIL:the TWRP log has no success line' sh "$H" sideload-result
-    rm -f /tmp/recovery.log
+    # ROM installed (4 lines), then GApps: only the lines after the ROM count.
+    printf 'I:Installing zip\nscript succeeded: result was [1.000000]\nUpdater process ended with RC=0\nInstall took 211 second(s).\n' > /tmp/recovery.log
+    expect 'log-lines: line count' '^RESULT=OK:4$' sh "$H" log-lines
+    printf 'I:Installing zip\nUpdater process ended with ERROR: 1\nError installing zip file\n' >> /tmp/recovery.log
+    expect 'sideload-result FROM: GApps failure not hidden by the ROM' '^RESULT=FAIL:TWRP reports' sh "$H" sideload-result 4
+    printf 'I:Installing zip\nI:no result yet\n' > /tmp/recovery.log
+    printf 'I:Installing zip\nUpdater process ended with RC=0\n' >> /tmp/recovery.log
+    expect 'sideload-result FROM: success after FROM' '^RESULT=OK$' sh "$H" sideload-result 2
+    printf 'I:Installing zip\nUpdater process ended with RC=0\nI:Installing zip\n' > /tmp/recovery.log
+    expect 'sideload-result FROM: earlier success does not count' '^RESULT=FAIL:the TWRP log has no success line' sh "$H" sideload-result 2
+    expect 'sideload-result FROM: rejects a bad value' '^RESULT=FAIL:usage' sh "$H" sideload-result 2x
+    rm -f /tmp/recovery.log /tmp/cityman-sideload.log
 else
     echo "  skip sideload-result (/tmp/recovery.log exists or /tmp not writable)"
 fi

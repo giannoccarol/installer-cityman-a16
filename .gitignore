@@ -8,3 +8,5 @@
 !/rom/README.txt
 /twrp/*
 !/twrp/README.txt
+/gapps/*
+!/gapps/README.txt

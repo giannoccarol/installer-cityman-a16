@@ -221,8 +221,25 @@ cmd_installed_version() {
     los=$(sed -n 's/^ro\.lineage\.build\.version=//p' $props | head -n 1)
     # shellcheck disable=SC2086
     dev=$(sed -n 's/^ro\.lineage\.device=//p' $props | head -n 1)
+    # Google apps (NikGapps, MindTheGapps, ...): GmsCore in priv-app or its permissions file.
+    gapps=no
+    for d in "$mnt/system" "$mnt" "$mnt/system/product" "$mnt/product" \
+             "$mnt/system/system_ext" "$mnt/system_ext"; do
+        if [ -f "$d/etc/permissions/com.google.android.gms.xml" ]; then gapps=yes; fi
+        for g in "$d"/priv-app/*GmsCore*; do
+            [ -e "$g" ] && gapps=yes
+        done
+    done
     umount "$mnt" 2>/dev/null
-    ok "sdk=$sdk lineage=$los device=$dev"
+    ok "sdk=$sdk lineage=$los device=$dev gapps=$gapps"
+}
+
+# Number of lines in the TWRP log, so that a later sideload-result reads only
+# the lines of the next installation.
+cmd_log_lines() {
+    log=/tmp/recovery.log
+    if [ -f "$log" ]; then ok "$(wc -l < "$log" | tr -d ' ')"; fi
+    ok 0
 }
 
 # After 'twrp format data': /data must not hold an Android install any more.
@@ -235,17 +252,24 @@ cmd_data_check() {
     ok "not-mounted"
 }
 
-# After adb sideload: result of the ROM installation in the TWRP log.
+# After adb sideload: result of the installation in the TWRP log.
+# FROM = number of log lines before this sideload (log-lines), default 0.
 cmd_sideload_result() {
+    from=${1:-0}
+    case "$from" in
+        *[!0-9]*) fail "usage: sideload-result [FROM_LINE]" ;;
+    esac
     log=/tmp/recovery.log
     [ -f "$log" ] || fail "TWRP log /tmp/recovery.log not found"
-    grep -E 'script succeeded|script aborted|Updater process ended|Install took|E[0-9]{4}:|Error installing zip' "$log" \
+    part=/tmp/cityman-sideload.log
+    tail -n +$((from + 1)) "$log" > "$part"
+    grep -E 'script succeeded|script aborted|Updater process ended|Install took|E[0-9]{4}:|Error installing zip' "$part" \
         | tail -n 8 | sed 's/^/LOG /'
-    if grep -qE 'script aborted|Updater process ended with ERROR|Error installing zip' "$log"; then
-        fail "TWRP reports that the ROM installation failed (see the LOG lines)"
+    if grep -qE 'script aborted|Updater process ended with ERROR|Error installing zip' "$part"; then
+        fail "TWRP reports that the installation failed (see the LOG lines)"
     fi
-    grep -qE 'Updater process ended with RC=0|script succeeded' "$log" \
-        || fail "the TWRP log has no success line for the ROM installation"
+    grep -qE 'Updater process ended with RC=0|script succeeded' "$part" \
+        || fail "the TWRP log has no success line for the installation"
     ok
 }
 
@@ -276,7 +300,8 @@ case "$cmd" in
     check-provision) cmd_check_provision ;;
     installed-version) cmd_installed_version ;;
     data-check) cmd_data_check ;;
-    sideload-result) cmd_sideload_result ;;
+    log-lines) cmd_log_lines ;;
+    sideload-result) cmd_sideload_result "$@" ;;
     boot-sha) cmd_boot_sha "$@" ;;
     *) fail "unknown helper command '$cmd'" ;;
 esac

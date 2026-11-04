@@ -14,6 +14,10 @@
     Update  Phone already on this LineageOS 23.2 port. Boots the Android 16 TWRP
             and sideloads the ROM. Data is kept.
 
+    Google apps: put the GApps zip in the 'gapps' folder (or pass -Gapps) and it is
+    sideloaded right after the ROM. An update over a system with GApps needs it:
+    without them again Android does not finish booting.
+
     Every file is checked (SHA-256) before it is written, and the installer stops
     with a message at the first error.
 
@@ -30,6 +34,10 @@ param(
     [string]$Rom = '',
     # Expected SHA-256 of the ROM zip. Default: SHA256SUMS (or <zip>.sha256) next to the zip.
     [string]$RomSha256 = '',
+    # GApps zip sideloaded after the ROM. Default: the only .zip in the 'gapps' folder.
+    [string]$Gapps = '',
+    # Update without GApps even if the installed system has them (Android may not boot).
+    [switch]$NoGapps,
     # Android 16 TWRP image. Default: twrp\twrp-cityman-a16.img.
     [string]$Twrp = '',
     # EFIESP folder of the phone in mass storage mode (Full mode). Default: folder dialog.
@@ -82,6 +90,8 @@ $script:WorkDir = $null
 $script:BackupDir = $null
 $script:TwrpPath = $null
 $script:RomPath = $null
+$script:GappsPath = $null
+$script:InstalledGapps = $false
 $script:BootSha = $null
 $script:BootSize = 0
 $script:LogFile = $null
@@ -555,6 +565,41 @@ function Resolve-Rom {
     Write-Ok "Flashable zip for cityman; boot.img $($script:BootSize) bytes."
 }
 
+function Resolve-Gapps {
+    Write-Step 'Checking the Google apps (GApps)'
+    $path = $Gapps
+    if (-not $path) {
+        $dir = Join-Parts @($Root, 'gapps')
+        $zips = @(Get-ChildItem -LiteralPath $dir -Filter '*.zip' -File -ErrorAction SilentlyContinue)
+        if ($zips.Count -eq 0) {
+            Write-Info "No GApps zip in $dir, so the ROM is installed without Google apps."
+            return
+        }
+        if ($zips.Count -gt 1) {
+            Stop-Install "More than one zip in $dir ($(($zips | ForEach-Object { $_.Name }) -join ', ')). Keep one, or pass -Gapps <path>."
+        }
+        $path = $zips[0].FullName
+    }
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { Stop-Install "GApps zip not found: $path" }
+    $path = Get-FullPath $path
+    $name = Split-Path -Leaf $path
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    try { $zip = [System.IO.Compression.ZipFile]::OpenRead($path) }
+    catch { Stop-Install "$name is not a valid zip file: $($_.Exception.Message)" }
+    try {
+        if ($null -eq $zip.GetEntry('META-INF/com/google/android/update-binary')) {
+            Stop-Install "$name is not a flashable zip (no update-binary)."
+        }
+        if ($null -ne $zip.GetEntry('boot.img')) {
+            Stop-Install "$name contains a boot.img: it looks like a ROM, not GApps."
+        }
+    } finally {
+        $zip.Dispose()
+    }
+    $script:GappsPath = $path
+    Write-Ok "$name (sideloaded after the ROM). Use GApps for Android 16, arm64."
+}
+
 function Resolve-Twrp {
     Write-Step 'Checking the Android 16 TWRP'
     $path = $Twrp
@@ -642,6 +687,7 @@ function Select-Mode {
     Write-Host '  2) Clean install  - phone already has LK and Android partitions'
     Write-Host '                      (for example LineageOS 18.1). Erases all data.'
     Write-Host '  3) Update         - phone already runs this LineageOS 23.2 port. Keeps data.'
+    Write-Host '                      If you use Google apps, put their zip in the gapps folder.'
     Write-Host ''
     switch (Read-Answer '  Choose 1, 2 or 3') {
         '1' { return 'Full' }
@@ -847,7 +893,7 @@ function Invoke-Wipe {
     Write-Ok 'Data formatted, cache and Dalvik wiped.'
 }
 
-function Enter-SideloadMode {
+function Enter-SideloadMode([string]$Path) {
     for ($t = 1; $t -le 6; $t++) {
         if ($t -gt 1) {
             Write-Info "TWRP is not in sideload mode yet, retrying ($t/6)..."
@@ -867,22 +913,27 @@ function Enter-SideloadMode {
         $p.Dispose()
         if ($entered) { return }
     }
-    Stop-Install "TWRP did not enter ADB sideload mode. On the phone choose Advanced > ADB Sideload and swipe, then run: adb sideload `"$($script:RomPath)`""
+    Stop-Install "TWRP did not enter ADB sideload mode. On the phone choose Advanced > ADB Sideload and swipe, then run: adb sideload `"$Path`""
 }
 
-function Invoke-Sideload {
-    Write-Step 'Installing the ROM (adb sideload)'
-    Enter-SideloadMode
-    Write-Info 'Sending the ROM. TWRP installs it while it arrives: about 4-5 minutes.'
-    $rc = Invoke-Console $script:Adb @('sideload', $script:RomPath)
+function Invoke-Sideload([string]$Path, [string]$What, [string]$Duration) {
+    Write-Step "Installing the $What (adb sideload)"
+    $from = (Invoke-Helper 'log-lines' 60 -Quiet).Message
+    if ($from -notmatch '^\d+$') { $from = '0' }
+    Enter-SideloadMode $Path
+    Write-Info "Sending the $What. TWRP installs it while it arrives: $Duration."
+    $rc = Invoke-Console $script:Adb @('sideload', $Path)
     if ($rc -ne 0) {
         Write-Info "adb sideload ended with code $rc. TWRP often reports a transfer error at the end even when the install worked: checking the TWRP log."
     }
     $state = Wait-AdbState @('recovery') 900 'Waiting for TWRP to finish the installation...'
     if (-not $state) { Stop-Install 'TWRP did not come back after the sideload. Look at the phone screen; run the installer again in Update or Clean mode.' }
     Wait-Twrp
-    [void](Invoke-Helper 'sideload-result')
-    Write-Ok 'TWRP reports a successful installation.'
+    $r = Invoke-Helper "sideload-result $from" 120 -AllowFail
+    if (-not $r.Ok) {
+        Stop-Install "The $What was not installed: $($r.Message). The phone is in TWRP and was not rebooted; run the installer again."
+    }
+    Write-Ok "TWRP reports a successful installation of the $What."
 }
 
 function Test-BootPartition {
@@ -906,10 +957,14 @@ function Test-InstalledSystem {
             if ($kv -match '^sdk=(.*)$') { $sdk = $Matches[1] }
             if ($kv -match '^lineage=(.*)$') { $los = $Matches[1] }
             if ($kv -match '^device=(.*)$') { $dev = $Matches[1] }
+            if ($kv -eq 'gapps=yes') { $script:InstalledGapps = $true }
         }
-        Write-Info "Installed: LineageOS '$los', Android SDK '$sdk', device '$dev'."
+        $g = 'without Google apps'
+        if ($script:InstalledGapps) { $g = 'with Google apps (GApps)' }
+        Write-Info "Installed: LineageOS '$los', Android SDK '$sdk', device '$dev', $g."
         if ($sdk -match '^\d+$' -and [int]$sdk -ge 36 -and $los -like '23*' -and $dev -eq 'cityman') {
             Write-Ok 'The phone runs LineageOS 23.x for cityman: data is kept.'
+            Test-GappsNeeded
             return
         }
         Write-Warn 'This is not the LineageOS 23.2 cityman build. Updating over another system without formatting data usually ends in a boot loop; use the Clean mode for that.'
@@ -917,6 +972,19 @@ function Test-InstalledSystem {
         Write-Warn "Could not read the installed system: $($r.Message)."
     }
     Confirm-Word 'Update anyway, keeping data?' 'UPDATE' 'Stopped before installing. Nothing was written; the phone is in TWRP (run the installer in Clean mode for a clean install).'
+}
+
+# An update replaces the system partition, GApps included: if the installed system
+# has them and no GApps zip is given, Android would not finish booting.
+function Test-GappsNeeded {
+    if (-not $script:InstalledGapps -or $script:GappsPath) { return }
+    if ($NoGapps) {
+        Write-Warn 'The installed system has Google apps and -NoGapps was given: they are removed. Android may not boot until you install GApps again or format data.'
+        return
+    }
+    Stop-Install ("The installed system has Google apps (GApps). An update replaces the system partition and removes them, and Android then does not finish booting.`n" +
+        "Put the GApps zip you installed before (Android 16, arm64, for example NikGapps core) in $(Join-Parts @($Root, 'gapps')) and run the installer again; it is installed right after the ROM.`n" +
+        "Nothing was written. The phone is in TWRP: to start Android again, run: adb reboot")
 }
 
 function Enter-Fastboot {
@@ -934,14 +1002,33 @@ function Enter-Fastboot {
     if ($d.Count -eq 1 -and @('device', 'recovery', 'sideload') -contains $d[0].State) {
         Write-Info "Phone found ($($d[0].State)): rebooting it to the bootloader."
         [void](Invoke-Tool $script:Adb @('reboot', 'bootloader') 30)
+        Start-Sleep -Seconds 5
     } else {
         Write-Info 'Phone not found. Connect it and either start Android with USB debugging enabled,'
-        Write-Info 'or put it in the LK bootloader (fastboot).'
+        Write-Info 'or put it in the LK bootloader (fastboot). If Android keeps restarting (boot loop),'
+        Write-Info 'leave it connected: it is sent to the bootloader as soon as it shows up on adb.'
     }
-    if (-not (Wait-Fastboot 600 'Waiting for the phone in fastboot (LK)...')) {
-        Stop-Install 'The phone did not appear in fastboot within 10 minutes.'
+    # Waits for fastboot, and reboots to the bootloader a phone that appears on adb
+    # (this ROM starts adb early in the boot, also when Android does not finish booting).
+    $deadline = (Get-Date).AddSeconds(600)
+    $nextHint = (Get-Date).AddSeconds(45)
+    while ((Get-Date) -lt $deadline) {
+        $fb = @(Get-FastbootDevices)
+        if ($fb.Count -gt 1) { Stop-Install 'More than one device is in fastboot mode. Disconnect the others.' }
+        if ($fb.Count -eq 1) { Write-Ok 'Phone in LK (fastboot).'; return }
+        $d = @(Get-AdbDevices)
+        if ($d.Count -eq 1 -and @('device', 'recovery', 'sideload') -contains $d[0].State) {
+            Write-Info "Phone found ($($d[0].State)): rebooting it to the bootloader."
+            [void](Invoke-Tool $script:Adb @('reboot', 'bootloader') 30)
+            Start-Sleep -Seconds 5
+        }
+        if ((Get-Date) -gt $nextHint) {
+            Write-Info 'Waiting for the phone in fastboot (LK) or on adb...'
+            $nextHint = (Get-Date).AddSeconds(45)
+        }
+        Start-Sleep -Seconds 2
     }
-    Write-Ok 'Phone in LK (fastboot).'
+    Stop-Install 'The phone did not appear in fastboot or on adb within 10 minutes.'
 }
 
 function Restart-Phone {
@@ -963,7 +1050,7 @@ function Invoke-Main {
         Write-Info 'The full install writes to the phone''s EFIESP: asking for administrator rights.'
         $list = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath, '-Mode', 'Full', '-PauseAtEnd')
         if ($Resume) { $list += '-Resume'; $list += $Resume }
-        foreach ($n in @('Rom', 'Twrp', 'EfiEsp', 'OfficialDir', 'AdbPath', 'FastbootPath')) {
+        foreach ($n in @('Rom', 'Gapps', 'Twrp', 'EfiEsp', 'OfficialDir', 'AdbPath', 'FastbootPath')) {
             $v = Get-Variable -Name $n -ValueOnly
             if ($v) { $list += "-$n"; $list += (Get-FullPath $v) }
         }
@@ -991,6 +1078,7 @@ function Invoke-Main {
     }
     Resolve-Twrp
     Resolve-Rom
+    Resolve-Gapps
 
     switch ($mode) {
         'Full' {
@@ -1022,8 +1110,9 @@ function Invoke-Main {
             Test-InstalledSystem
         }
     }
-    Invoke-Sideload
+    Invoke-Sideload $script:RomPath 'ROM' 'about 4-5 minutes'
     Test-BootPartition
+    if ($script:GappsPath) { Invoke-Sideload $script:GappsPath 'Google apps (GApps)' 'about 2-3 minutes' }
     Restart-Phone
     if ($script:BackupDir) { Write-Info "Keep the backups in $($script:BackupDir): they are the only copy of this phone's provisioning data." }
 }

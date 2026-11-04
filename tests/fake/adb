@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Fake adb for tests/run-flow-tests.sh: a Lumia 950 XL with LK and TWRP.
-# State lives in $FAKE_STATE: state (fastboot|booting|recovery|sideload|device|off).
+# State lives in $FAKE_STATE: state (fastboot|booting|recovery|sideload|device|off|looping).
+# looping = Android in a boot loop: adb sees it only now and then.
 S=${FAKE_STATE:?}
 echo "adb $*" >> "$S/calls.log"
 state=$(cat "$S/state")
@@ -19,6 +20,7 @@ case "$1" in
         fi
         echo "List of devices attached"
         case "$state" in recovery|sideload|device) printf '%s\t%s\n' $SERIAL "$state" ;; esac
+        if [ "$state" = looping ] && [ $(($(count loop) % 4)) -eq 0 ]; then printf '%s\tdevice\n' $SERIAL; fi
         echo; exit 0 ;;
     push)
         need_recovery; mkdir -p "$S/remote"; cp "$2" "$S/remote/$(basename "$3")"
@@ -27,6 +29,10 @@ case "$1" in
         need_recovery; b=$(basename "$2" .bin)
         printf 'content-%s' "$b" > "$3"; echo "$2: 1 file pulled."; exit 0 ;;
     reboot)
+        if [ "$state" = looping ]; then
+            # Only works while adb sees the phone (every 4th 'adb devices').
+            [ $(($(cat "$S/n-loop") % 4)) -eq 0 ] || { echo "adb: no devices/emulators found" >&2; exit 1; }
+        fi
         if [ "$2" = bootloader ]; then echo fastboot > "$S/state"; else echo off > "$S/state"; fi
         exit 0 ;;
     sideload)
@@ -86,7 +92,8 @@ case "$cmd" in
             put-lk) touch "$S/lk-fixed"; echo RESULT=OK ;;
             pre-provision) echo RESULT=OK ;;
             check-provision) echo RESULT=OK ;;
-            installed-version) echo "RESULT=OK:${FAKE_INSTALLED:-sdk=36 lineage=23.2 device=cityman}" ;;
+            installed-version) echo "RESULT=OK:${FAKE_INSTALLED:-sdk=36 lineage=23.2 device=cityman gapps=no}" ;;
+            log-lines) echo "RESULT=OK:$(cat "$S/installed" 2>/dev/null | wc -l)" ;;
             data-check) echo RESULT=OK:formatted ;;
             sideload-result)
                 echo "LOG script succeeded: result was [1.000000]"; echo "LOG Updater process ended with RC=0"; echo RESULT=OK ;;

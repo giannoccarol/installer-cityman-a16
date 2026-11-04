@@ -39,6 +39,13 @@ Download this repository, then put next to `installer.bat`:
 | `rom\` | `lineage-23.2-YYYYMMDD-UNOFFICIAL-cityman.zip` and its `SHA256SUMS` | ROM download page |
 | `twrp\` | `twrp-cityman-a16.img` | [release page](https://github.com/giannoccarol/android_device_msft_cityman/releases) of the device tree |
 | `official\` | the official installer at commit `5c215fd` | downloaded by the installer in full mode (about 110 MB), or put it there yourself |
+| `gapps\` | optional: one GApps zip for Android 16, arm64 (for example NikGapps core) | the GApps project's page |
+
+**Google apps.** An update replaces the system partition, and GApps live there: if the
+phone has GApps, put the same GApps zip in `gapps\` before an update. The installer
+sideloads it right after the ROM, before rebooting. If the installed system has GApps
+and `gapps\` is empty, the update stops before writing anything, because Android does
+not finish booting when the GApps disappear from under their data.
 
 The installer checks the SHA-256 of every file before it writes it: the ROM against
 `SHA256SUMS` (or `-RomSha256`), the TWRP and the official files against
@@ -59,6 +66,8 @@ installer.bat -Mode Update -Rom D:\roms\lineage-23.2-20261030-UNOFFICIAL-cityman
 | `-Mode Full\|Clean\|Update` | skip the menu |
 | `-Rom <zip>` | ROM zip (default: the only `lineage-23.2-*-cityman.zip` in `rom\`) |
 | `-RomSha256 <hash>` | expected SHA-256 of the zip, if there is no `SHA256SUMS` file |
+| `-Gapps <zip>` | GApps zip sideloaded after the ROM (default: the only `.zip` in `gapps\`) |
+| `-NoGapps` | update without GApps even if the installed system has them (Android may not boot until you install them or format data) |
 | `-Twrp <img>` | Android 16 TWRP (default: `twrp\twrp-cityman-a16.img`) |
 | `-EfiEsp <folder>` | the phone's EFIESP drive in full mode (default: folder dialog) |
 | `-OfficialDir <folder>` | official installer files (default: `official\`) |
@@ -95,12 +104,14 @@ A log of each run is written to `logs\`.
    `modemst1/modemst2/fsc/fsg/ssd`), then checks the result.
 9. `twrp format data`, `twrp wipe cache`, `twrp wipe dalvik`.
 10. ADB sideload of the ROM, check of the TWRP log, check that the `boot` partition is
-    byte for byte the zip's `boot.img`, reboot.
+    byte for byte the zip's `boot.img`, then the GApps if there is a zip in `gapps\`
+    (checked in the TWRP log too), reboot.
 
 Clean and Update start at step 8 (without provisioning): the installer puts the phone
 in LK (`adb reboot bootloader` if it is in Android or TWRP), boots the Android 16 TWRP
 and goes on from there. Update reads the installed system first and asks before
-installing over anything that is not LineageOS 23.x for cityman.
+installing over anything that is not LineageOS 23.x for cityman; it also stops if that
+system has GApps and no GApps zip was given.
 
 The first boot takes several minutes, longer after a clean install.
 
@@ -151,6 +162,12 @@ The first boot takes several minutes, longer after a clean install.
   `-Resume Modem` after partitioning (it writes recovery and modem, provisions and installs).
 - If the phone stays in LK after a failed ROM install, run the installer again in Clean
   (or Update) mode.
+- Boot loop after an update over GApps without the GApps zip (installer versions before
+  2026-11-04 did not install GApps): put the GApps zip in `gapps\`, leave the phone
+  connected while it restarts and run the installer in Update mode. This ROM starts adb
+  early in the boot, and the installer sends the phone to the bootloader as soon as it
+  appears; nothing on the phone has to be pressed. If adb never sees it, put the phone
+  in LK by hand and run the installer again.
 - Going back to Windows needs the original EFIESP files (in the backup folder), the
   provisioning backup and a stock FFU flashed with WPInternals.
 

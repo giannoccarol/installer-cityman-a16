@@ -170,6 +170,44 @@ check full-nodev 'exit code 1, partition.sh not run' '[ "$(cat rc)" = 1 ] && [ !
 check full-nodev 'message: nothing erased, how to resume' 'grep -q "Nothing was erased" out.txt && grep -q "Resume Partition" out.txt'
 rm -rf "$REPO/backups"
 
+# Fake GApps zip.
+GAPPS="$T/gapps/NikGapps-core-arm64-16-fake.zip"
+mkdir -p "$T/gapps"
+python3 -I - "$GAPPS" <<'PY2'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1], 'w') as z:
+    z.writestr('META-INF/com/google/android/update-binary', 'fake')
+    z.writestr('AppSet/Core/GmsCore.zip', b'fake')
+PY2
+GAPPS_SHA=$(sha256sum "$GAPPS" | cut -c1-64)
+
+# 18. Update over a system with GApps, no GApps zip: stops before writing anything.
+FAKE_INSTALLED='sdk=36 lineage=23.2 device=cityman gapps=yes' run update-gapps-missing device '' -Mode Update
+check update-gapps-missing 'exit code 1, no sideload' '[ "$(cat rc)" = 1 ] && [ ! -f installed ]'
+check update-gapps-missing 'message about GApps' 'grep -q "has Google apps (GApps)" out.txt && grep -q "gapps" out.txt'
+
+# 19. Update over a system with GApps, GApps zip given: ROM then GApps.
+FAKE_INSTALLED='sdk=36 lineage=23.2 device=cityman gapps=yes' run update-gapps device '' -Mode Update -Gapps "$GAPPS"
+check update-gapps 'exit code 0' '[ "$(cat rc)" = 0 ]'
+check update-gapps 'ROM then GApps sideloaded, rebooted' 'diff <(printf "sideload %s\nsideload %s\n" $ROM_SHA $GAPPS_SHA) installed && [ "$(cat state)" = off ]'
+check update-gapps 'GApps result read from its own log lines' 'grep -q "helper.sh sideload-result 1" calls.log'
+
+# 20. -NoGapps: update anyway, with a warning.
+FAKE_INSTALLED='sdk=36 lineage=23.2 device=cityman gapps=yes' run update-nogapps device '' -Mode Update -NoGapps
+check update-nogapps 'exit code 0, ROM only, warning' '[ "$(cat rc)" = 0 ] && [ "$(cat installed)" = "sideload $ROM_SHA" ] && grep -q "NoGapps was given" out.txt'
+
+# 21. Clean install with GApps.
+run clean-gapps device 'ERASE\n' -Mode Clean -Gapps "$GAPPS"
+check clean-gapps 'exit code 0, ROM then GApps' '[ "$(cat rc)" = 0 ] && diff <(printf "sideload %s\nsideload %s\n" $ROM_SHA $GAPPS_SHA) installed'
+
+# 22. Phone in a boot loop (seen on adb only now and then): sent to the bootloader, updated.
+run update-loop looping '' -Mode Update -Gapps "$GAPPS"
+check update-loop 'exit code 0, ROM and GApps installed' '[ "$(cat rc)" = 0 ] && diff <(printf "sideload %s\nsideload %s\n" $ROM_SHA $GAPPS_SHA) installed'
+
+# 23. A ROM zip given as GApps is refused before touching the phone.
+run gapps-is-rom device '' -Mode Update -Gapps "$ROM"
+check gapps-is-rom 'exit code 1, phone untouched' '[ "$(cat rc)" = 1 ] && ! grep -qE "fastboot boot|reboot" calls.log && grep -q "looks like a ROM" out.txt'
+
 rm -rf "$REPO/work" "$REPO/logs"
 echo "passed: $PASS, failed: $FAIL (outputs in $T)"
 [ $FAIL -eq 0 ]
