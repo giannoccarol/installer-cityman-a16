@@ -23,8 +23,11 @@ Experimental. It erases Windows on the phone (full install) or all user data
 - [WPInternals](https://github.com/ReneLergner/WPinternals), for the full install:
   the phone must be unlocked with it, and it switches the phone to mass storage mode.
 - [Android SDK Platform Tools](https://developer.android.com/tools/releases/platform-tools)
-  (`adb` and `fastboot`), with their folder added to `PATH`. In full mode the installer
-  falls back to the copy in the official installer's `bin` folder if they are not on `PATH`.
+  (`adb` and `fastboot`). The installer looks for them on `PATH`, then in a
+  `platform-tools` (or `bin`) folder next to `installer.bat`, in the installer folder
+  itself and in the official installer's `bin` folder. If it finds none, it offers to
+  download Google's Platform Tools r37.0.1 (about 8 MB, SHA-256 checked) into
+  `platform-tools\`.
 - [Google USB driver](https://developer.android.com/studio/run/win-usb) installed system wide,
   so that Windows sees the phone in LK (fastboot), in TWRP and in Android.
 - A battery above 50% and a good USB cable.
@@ -71,7 +74,7 @@ installer.bat -Mode Update -Rom D:\roms\lineage-23.2-20261030-UNOFFICIAL-cityman
 | `-Twrp <img>` | Android 16 TWRP (default: `twrp\twrp-cityman-a16.img`) |
 | `-EfiEsp <folder>` | the phone's EFIESP drive in full mode (default: folder dialog) |
 | `-OfficialDir <folder>` | official installer files (default: `official\`) |
-| `-AdbPath`, `-FastbootPath` | adb and fastboot executables |
+| `-AdbPath`, `-FastbootPath` | adb and fastboot executables (default: `PATH`, then `platform-tools\` next to the installer) |
 | `-Resume Partition\|Modem` | resume an interrupted full install with the phone in LK: `Partition` when EFIESP is already prepared, `Modem` when the Android partitions already exist |
 
 The full install asks for administrator rights, as the official installer does.
@@ -149,6 +152,15 @@ The first boot takes several minutes, longer after a clean install.
   for the interface, and the full install could stop with "No answer from the phone
   for 'check-windows'" before the backup. If adb still loses the connection, the
   installer reconnects and runs the check again (up to 4 attempts).
+- "The TWRP command interface did not start within 3 minutes": TWRP answers on adb
+  but does not take commands. While it waits, the installer shows what adb answers
+  and, if it gives up, copies `adb devices` and the end of TWRP's `/tmp/recovery.log`
+  into the log: send that log with the report. If TWRP shows a question or a password
+  screen, answer it on the phone. To go on, hold power until the phone restarts in LK
+  and run the installer again (a full install says which `-Resume` to use). In Clean
+  or Update mode you can also install from the TWRP on the screen: Advanced > ADB
+  Sideload, swipe, then `adb sideload <rom>.zip` (and the GApps zip the same way);
+  for a clean install format data first (Wipe > Format Data).
 - If a full install stops before you type `ERASE`, nothing was erased, but the phone
   starts LK instead of Windows. Leave it connected and run
   `installer.bat -Mode Full -Resume Partition`. To go back to Windows instead, copy the
@@ -179,7 +191,8 @@ The first boot takes several minutes, longer after a clean install.
   against a fake `adb` and `fastboot` (`tests/fake/`) that simulate LK and TWRP,
   including the `twrp sideload` race and the sideload transfer error. Scenarios: full
   install, LK repair, refusals at every confirmation, clean, update, update over another
-  system, wrong ROM or TWRP checksum, ROM for another device, `boot` mismatch.
+  system, wrong ROM or TWRP checksum, ROM for another device, `boot` mismatch, adb and
+  fastboot next to the installer or missing, TWRP that never takes commands.
 - `tests/helper-tests.sh` tests the phone-side helper on a fake sysfs/by-name tree.
   Run it with the shell you want to check, for example busybox in a container.
 

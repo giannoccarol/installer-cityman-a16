@@ -10,3 +10,4 @@
 !/twrp/README.txt
 /gapps/*
 !/gapps/README.txt
+/platform-tools/

@@ -208,6 +208,41 @@ check update-loop 'exit code 0, ROM and GApps installed' '[ "$(cat rc)" = 0 ] &&
 run gapps-is-rom device '' -Mode Update -Gapps "$ROM"
 check gapps-is-rom 'exit code 1, phone untouched' '[ "$(cat rc)" = 1 ] && ! grep -qE "fastboot boot|reboot" calls.log && grep -q "looks like a ROM" out.txt'
 
+# 24-25. adb and fastboot found next to the installer, not on PATH (copy of the
+# installer in its own folder, PATH with only the commands the fakes need).
+BARE="$T/bare-path"; mkdir -p "$BARE"
+for c in bash env cat cp mkdir basename sha256sum cut unzip head wc grep sleep touch rm dotnet; do
+    ln -sf "$(command -v $c)" "$BARE/$c"
+done
+INST="$T/inst"; mkdir -p "$INST/platform-tools"
+cp "$REPO/installer.ps1" "$REPO/checksums.sha256" "$INST/"; cp -r "$REPO/device" "$INST/"
+PWSH=$(command -v pwsh)
+run_bare() {  # run_bare NAME STATE [installer args...]
+    local name=$1 state=$2; shift 2
+    export FAKE_STATE="$T/$name"; export FAKE_ROM="$ROM"
+    mkdir -p "$FAKE_STATE"; echo "$state" > "$FAKE_STATE/state"
+    PATH="$BARE" "$PWSH" -NoProfile -File "$INST/installer.ps1" -NoElevate -Twrp "$TWRP" -Rom "$ROM" "$@" \
+        < /dev/null > "$FAKE_STATE/out.txt" 2>&1
+    echo $? > "$FAKE_STATE/rc"
+}
+run_bare tools-missing device -Mode Update
+check tools-missing 'exit code 1, phone untouched, says where to put platform-tools' '[ "$(cat rc)" = 1 ] && [ ! -f calls.log ] && grep -q "extract the platform-tools folder next to installer.bat" out.txt'
+ln -s "$HERE/fake/adb" "$INST/platform-tools/adb"; ln -s "$HERE/fake/fastboot" "$INST/platform-tools/fastboot"
+run_bare tools-local device -Mode Update
+check tools-local 'exit code 0 with platform-tools next to the installer' '[ "$(cat rc)" = 0 ] && grep -q "adb: $INST/platform-tools/adb" out.txt && [ "$(cat installed)" = "sideload $ROM_SHA" ]'
+rm -rf "$INST"
+
+# 26. TWRP never accepts commands (takes 3 minutes): stops with what adb said and the TWRP log.
+FAKE_ORS_DOWN=1 run ors-down device '' -Mode Update
+check ors-down 'exit code 1, no sideload' '[ "$(cat rc)" = 1 ] && [ ! -f installed ]'
+check ors-down 'progress shows what adb says' 'grep -q "Still waiting for TWRP to accept commands (adb said: TWRP does not appear to be running" out.txt'
+check ors-down 'error with last answer, adb devices and recovery.log' 'grep -q "did not start within 3 minutes (last adb answer:" out.txt && grep -q "adb devices: f24efc25" out.txt && grep -q "recovery.log: I:fake recovery.log tail" out.txt'
+
+# 27. Same during a resumed full install: says how to resume.
+FAKE_ORS_DOWN=1 run ors-down-full fastboot '' -Mode Full -Resume Modem -OfficialDir "$T/official"
+check ors-down-full 'exit code 1, resume hint' '[ "$(cat rc)" = 1 ] && grep -q "installer.bat -Mode Full -Resume Modem" out.txt'
+rm -rf "$REPO/backups"
+
 rm -rf "$REPO/work" "$REPO/logs"
 echo "passed: $PASS, failed: $FAIL (outputs in $T)"
 [ $FAIL -eq 0 ]

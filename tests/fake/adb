@@ -51,8 +51,8 @@ need_recovery
 case "$cmd" in
     'echo cityman-shell-ok') echo cityman-shell-ok ;;
     'twrp print cityman-twrp-ready')
-        # First call: TWRP GUI not up yet.
-        if [ "$(count ors)" -eq 1 ]; then
+        # First call: TWRP GUI not up yet. FAKE_ORS_DOWN: it never comes up.
+        if [ -n "${FAKE_ORS_DOWN:-}" ] || [ "$(count ors)" -eq 1 ]; then
             echo "TWRP does not appear to be running. Waiting for TWRP to start . . ."
         else
             echo "cityman-twrp-ready"; echo "Done processing script file"
@@ -65,6 +65,7 @@ case "$cmd" in
         echo "${cmd#twrp }" >> "$S/wiped"
         echo "Formatting..."; echo "Done processing script file" ;;
     "pkill -f 'twrp [p]rint'") ;;
+    'tail -n 40 /tmp/recovery.log') echo "I:Set page: 'main'"; echo "I:fake recovery.log tail" ;;
     'parted /dev/block/mmcblk0 unit s print') echo "Model: MMC 032G32 (sd/mmc)"; echo "Number  Start  End  Size  Name" ;;
     'cd / && yes y | bash /tmp/partition.sh')
         grep -qF 'grep -E "[[:space:]]${androidPartitions[i]}\$"' "$S/remote/partition.sh" \

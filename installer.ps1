@@ -44,6 +44,7 @@ param(
     [string]$EfiEsp = '',
     # Folder with the official Android4Lumia950 installer (Full mode). Default: 'official'.
     [string]$OfficialDir = '',
+    # adb and fastboot. Default: PATH, then a platform-tools folder next to the installer.
     [string]$AdbPath = '',
     [string]$FastbootPath = '',
     # Full mode, resume after an interruption, with the phone in LK:
@@ -67,6 +68,10 @@ $OfficialZipUrl = "https://github.com/Android4Lumia950/installer/archive/$Offici
 $OfficialRepoUrl = 'https://github.com/Android4Lumia950/installer'
 $TwrpReleaseUrl = 'https://github.com/giannoccarol/android_device_msft_cityman/releases'
 $PlatformToolsUrl = 'https://developer.android.com/tools/releases/platform-tools'
+# Offered for download when adb or fastboot is missing (SHA-256 in checksums.sha256).
+$PlatformToolsVersion = '37.0.1'
+$PlatformToolsZip = "platform-tools_r$PlatformToolsVersion-win.zip"
+$PlatformToolsZipUrl = "https://dl.google.com/android/repository/$PlatformToolsZip"
 $UsbDriverUrl = 'https://developer.android.com/studio/run/win-usb'
 $RemoteHelper = '/tmp/cityman-a16-helper.sh'
 $Stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
@@ -95,6 +100,8 @@ $script:InstalledGapps = $false
 $script:BootSha = $null
 $script:BootSize = 0
 $script:LogFile = $null
+# Added to 'run the installer again' when a full install has to be resumed.
+$script:RetryHint = ''
 
 # ---------------------------------------------------------------------------
 # Output and questions
@@ -253,21 +260,76 @@ function Get-Lines([string]$Text) {
     return @(($Text -replace "`r", '') -split "`n" | Where-Object { $_.Trim() -ne '' })
 }
 
+# Looks for adb or fastboot: PATH, then the usual folders next to the installer
+# (platform-tools, bin, the installer folder itself, the official installer's bin),
+# then a platform-tools folder extracted one or two levels deeper (Windows
+# "Extract All" adds a folder named after the zip), then the usual SDK places.
+function Find-Tool([string]$Name, [string]$FallbackDir) {
+    $cmd = @(Get-Command $Name -CommandType Application -ErrorAction SilentlyContinue)
+    if ($cmd.Count -gt 0) { return $cmd[0].Path }
+    $exe = $Name
+    if (Test-IsWindows) { $exe = "$Name.exe" }
+    $dirs = @((Join-Parts @($Root, 'platform-tools')), (Join-Parts @($Root, 'bin')), $Root,
+        (Join-Parts @($Root, 'official', 'bin')))
+    if ($FallbackDir) { $dirs += (Join-Parts @($FallbackDir, 'bin')) }
+    foreach ($d in $dirs) {
+        $p = Join-Parts @($d, $exe)
+        if (Test-Path -LiteralPath $p -PathType Leaf) { return (Get-FullPath $p) }
+    }
+    $rootFull = Get-FullPath $Root
+    $deeper = @(Get-ChildItem -LiteralPath $rootFull -Filter $exe -File -Recurse -Depth 3 -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName.Substring($rootFull.Length) -notmatch '^[\\/]?(downloads|work|backups|logs|tests)[\\/]' } |
+        Sort-Object { $_.FullName.Length })
+    if ($deeper.Count -gt 0) { return $deeper[0].FullName }
+    $more = @()
+    if ($env:LOCALAPPDATA) { $more += (Join-Parts @($env:LOCALAPPDATA, 'Android', 'Sdk', 'platform-tools')) }
+    if (Test-IsWindows) { $more += 'C:\platform-tools'; $more += 'C:\adb' }
+    foreach ($d in $more) {
+        $p = Join-Parts @($d, $exe)
+        if (Test-Path -LiteralPath $p -PathType Leaf) { return $p }
+    }
+    return $null
+}
+
+# Downloads Google's Platform Tools into the 'platform-tools' folder next to the installer.
+function Get-PlatformTools {
+    $dest = Join-Parts @($Root, 'platform-tools')
+    if (Test-Path -LiteralPath $dest) {
+        Stop-Install "$dest exists but has no adb or fastboot. Delete that folder and run the installer again."
+    }
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    $dl = Join-Parts @($Root, 'downloads')
+    New-Item -ItemType Directory -Force -Path $dl | Out-Null
+    $zip = Join-Parts @($dl, $PlatformToolsZip)
+    Write-Info "Downloading $PlatformToolsZipUrl ..."
+    try { Invoke-WebRequest -Uri $PlatformToolsZipUrl -OutFile $zip -UseBasicParsing }
+    catch { Stop-Install "Download failed: $($_.Exception.Message). Download the Platform Tools yourself ($PlatformToolsUrl) and extract the platform-tools folder next to installer.bat." }
+    Assert-Pinned $PlatformToolsZip (Get-Sha256File $zip) "The downloaded $PlatformToolsZip" "Delete $zip and run the installer again."
+    $tmp = Join-Parts @($dl, "platform-tools-$Stamp")
+    Expand-Archive -LiteralPath $zip -DestinationPath $tmp -Force
+    $inner = Join-Parts @($tmp, 'platform-tools')
+    if (-not (Test-Path -LiteralPath (Join-Parts @($inner, 'adb.exe')) -PathType Leaf)) { Stop-Install "Unexpected content in $zip." }
+    Move-Item -LiteralPath $inner -Destination $dest
+    Remove-Item -LiteralPath $tmp -Recurse -Force
+    Write-Ok "Platform Tools $PlatformToolsVersion extracted to $dest."
+}
+
 function Resolve-Tool([string]$Name, [string]$Override, [string]$FallbackDir) {
     if ($Override) {
         if (-not (Test-Path -LiteralPath $Override -PathType Leaf)) { Stop-Install "$Name not found at $Override." }
         return (Get-FullPath $Override)
     }
-    $cmd = @(Get-Command $Name -CommandType Application -ErrorAction SilentlyContinue)
-    if ($cmd.Count -gt 0) { return $cmd[0].Path }
-    if ($FallbackDir) {
-        $p = Join-Parts @($FallbackDir, 'bin', "$Name.exe")
-        if (Test-Path -LiteralPath $p -PathType Leaf) {
-            Write-Warn "$Name is not on PATH: using the copy from the official installer ($p)."
-            return $p
+    $p = Find-Tool $Name $FallbackDir
+    if ($p) { return $p }
+    if (Test-IsWindows) {
+        Write-Info "$Name was not found on PATH or in the installer folder."
+        if (Confirm-YesNo "Download Google's Android SDK Platform Tools $PlatformToolsVersion (about 8 MB) into the installer folder?") {
+            Get-PlatformTools
+            $p = Find-Tool $Name $FallbackDir
+            if ($p) { return $p }
         }
     }
-    Stop-Install "$Name was not found. Install the Android SDK Platform Tools and add their folder to PATH: $PlatformToolsUrl"
+    Stop-Install "$Name was not found. Download the Android SDK Platform Tools ($PlatformToolsUrl) and extract the platform-tools folder next to installer.bat (or add it to PATH, or pass -AdbPath and -FastbootPath)."
 }
 
 function Initialize-Tools([string]$FallbackDir) {
@@ -417,6 +479,15 @@ function Invoke-Helper([string]$Arguments, [int]$TimeoutSec = 120, [switch]$Allo
     Stop-Install "On the phone: $msg."
 }
 
+# Copies what adb and TWRP report into the log of this run, for a bug report.
+function Write-TwrpDiagnostics {
+    Write-Info 'For a bug report (also in the log of this run):'
+    $d = Invoke-Tool $script:Adb @('devices', '-l') 30
+    foreach ($l in (Get-Lines ($d.Out + "`n" + $d.Err))) { Write-Info "  adb devices: $l" }
+    $r = Invoke-Tool $script:Adb @('shell', 'tail -n 40 /tmp/recovery.log') 30
+    foreach ($l in (Get-Lines ($r.Out + "`n" + $r.Err))) { Write-Info "  recovery.log: $l" }
+}
+
 # Waits for TWRP: adb in recovery state, a working shell, and (with -NeedOrs)
 # the 'twrp' command interface. TWRP is not ready right after boot.
 function Wait-Twrp([switch]$NeedOrs) {
@@ -435,18 +506,32 @@ function Wait-Twrp([switch]$NeedOrs) {
     if (-not $shellOk) { Stop-Install 'TWRP is on adb but its shell does not answer. Reboot the phone to the bootloader and run the installer again.' }
     if ($NeedOrs) {
         $deadline = (Get-Date).AddSeconds(180)
+        $nextHint = (Get-Date).AddSeconds(45)
         $ready = $false
+        $said = ''
         while ((Get-Date) -lt $deadline) {
             # Blocks while the TWRP interface is not up; returns once TWRP reads commands.
             $r = Invoke-Tool $script:Adb @('shell', 'twrp print cityman-twrp-ready') 20
-            if (-not $r.TimedOut -and $r.ExitCode -eq 0 -and ($r.Out + $r.Err) -notmatch 'does not appear to be running') {
+            $said = (($r.Out + ' ' + $r.Err) -replace '\s+', ' ').Trim()
+            if ($r.TimedOut) { $said = ("no answer within 20 s " + $said).Trim() }
+            if (-not $r.TimedOut -and $r.ExitCode -eq 0 -and $said -notmatch 'does not appear to be running') {
                 $ready = $true
                 break
             }
             if ($r.TimedOut) { [void](Invoke-Tool $script:Adb @('shell', "pkill -f 'twrp [p]rint'") 15) }
+            if ((Get-Date) -gt $nextHint) {
+                Write-Info "Still waiting for TWRP to accept commands (adb said: $said)."
+                Write-Info 'If TWRP on the phone shows a question or a password screen, answer it (swipe, or Cancel).'
+                $nextHint = (Get-Date).AddSeconds(45)
+            }
             Start-Sleep -Seconds 5
         }
-        if (-not $ready) { Stop-Install 'The TWRP command interface did not start within 3 minutes. Reboot the phone to the bootloader and run the installer again.' }
+        if (-not $ready) {
+            Write-TwrpDiagnostics
+            Stop-Install ("The TWRP command interface did not start within 3 minutes (last adb answer: $said). " +
+                "Hold power until the phone restarts in the bootloader (LK), then run the installer again$($script:RetryHint). " +
+                'If it happens again, send the log of this run.')
+        }
     }
     # Once the interface is up TWRP has also restarted its USB connection (MTP):
     # check the shell again before sending the helper.
@@ -1090,7 +1175,11 @@ function Invoke-Main {
                 Write-Info "Resuming the full install at: $Resume."
                 Enter-Fastboot
             }
-            if ($Resume -ne 'Modem') { Invoke-Partitioning }
+            if ($Resume -ne 'Modem') {
+                $script:RetryHint = ' with: installer.bat -Mode Full -Resume Partition'
+                Invoke-Partitioning
+            }
+            $script:RetryHint = ' with: installer.bat -Mode Full -Resume Modem'
             Invoke-RecoveryAndModem
             Start-A16Twrp
             Invoke-Provisioning

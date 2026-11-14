@@ -22,3 +22,8 @@ b5ac4ffcbf22f3da43d7a5896c55d0e808d0c0da3cebde76fe44a93c93b7ab15  official/provi
 # Android 16 TWRP (twrp-cityman-a16.img, 2026-10-30). Add a line here when a new
 # TWRP build is released.
 35f4cd822caec6b5cd8b981b86f6e78169c318bca470d2e1b6bb4c5b319d8233  twrp-cityman-a16.img
+#
+# Google Android SDK Platform Tools for Windows, downloaded only when adb or
+# fastboot is missing (SHA-1 e03e78b1d80b396f1c3358e31251cb31740e1110 in Google's
+# repository2-3.xml).
+45f4d63113e895ebde0c90f194099a4676b6ac653bd28d54314a9e022bbc1a99  platform-tools_r37.0.1-win.zip
