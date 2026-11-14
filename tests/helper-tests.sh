@@ -6,14 +6,25 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 H="$HERE/../device/cityman-a16-helper.sh"
 T=$(mktemp -d)
 PASS=0; FAIL=0
-export CITYMAN_SYSBLOCK="$T/sys" CITYMAN_BYNAME="$T/byname" CITYMAN_DEVBLOCK="$T/dev" CITYMAN_DISK="$T/disk"
+export CITYMAN_SYSBLOCK="$T/sys" CITYMAN_BYNAME="$T/byname" CITYMAN_DEVBLOCK="$T/dev" CITYMAN_DISK="$T/disk" CITYMAN_FAKE_GPT="$T/gpt"
 mkdir -p "$T/bin" "$T/byname"
 for t in mkfs.fat mke2fs; do printf '#!/bin/sh\nexit 0\n' > "$T/bin/$t"; chmod +x "$T/bin/$t"; done
-# Fake parted: prints one line per partition name, like 'parted print'.
+# Fake parted: one line per partition, like 'parted print' (or 'parted -m' with -m).
+# The names come from $T/gpt when it exists (partitions created in this TWRP
+# session: sysfs has no PARTNAME for them), otherwise from sysfs.
 cat > "$T/bin/parted" <<'P'
 #!/bin/sh
-echo "Model: MMC (sd/mmc)"; echo "Number  Start  End  Size  File system  Name  Flags"
-n=1; for u in "$CITYMAN_SYSBLOCK"/mmcblk0p*/uevent; do echo " $n  1MB  2MB  1MB  $(sed -n 's/^PARTNAME=//p' "$u")"; n=$((n+1)); done
+[ -n "$CITYMAN_FAKE_PARTED_FAIL" ] && exit 1
+names() {
+    if [ -f "$CITYMAN_FAKE_GPT" ]; then cat "$CITYMAN_FAKE_GPT"
+    else for u in "$CITYMAN_SYSBLOCK"/mmcblk0p*/uevent; do sed -n 's/^PARTNAME=//p' "$u"; done; fi
+}
+case " $* " in
+    *" -m "*) echo "BYT;"; echo "$CITYMAN_DISK:1000s:sd/mmc:512:512:gpt:MMC:;"
+        n=1; names | while read -r p; do echo "$n:1s:2s:1s::$p:;"; n=$((n+1)); done ;;
+    *) echo "Model: MMC (sd/mmc)"; echo "Number  Start  End  Size  File system  Name  Flags"
+        n=1; names | while read -r p; do echo " $n  1MB  2MB  1MB  $p"; n=$((n+1)); done ;;
+esac
 P
 chmod +x "$T/bin/parted"
 export PATH="$T/bin:$PATH"
@@ -66,6 +77,17 @@ mkparts $PROV EFIESP $ANDR
 expect 'check-android: all partitions' '^RESULT=OK$' sh "$H" check-android
 mkparts $PROV EFIESP aboot boot recovery
 expect 'check-android: missing partitions' '^RESULT=FAIL:partition misc is missing' sh "$H" check-android
+
+# After partition.sh on the phone: parted created the Android partitions with
+# BLKPG, so sysfs has no PARTNAME for them; the GPT on the disk has the names.
+mkparts $PROV EFIESP $ANDR
+i=17; for n in $ANDR; do sed -i '/^PARTNAME=/d' "$T/sys/mmcblk0p$i/uevent"; i=$((i + 1)); done
+printf '%s\n' $PROV EFIESP $ANDR > "$T/gpt"
+expect 'check-android: names from the GPT when sysfs has none (new partitions)' '^RESULT=OK$' sh "$H" check-android
+expect 'check-android: sysfs alone misses them (the bug seen on the phone)' '^RESULT=FAIL:partition aboot is missing' env CITYMAN_FAKE_PARTED_FAIL=1 sh "$H" check-android
+rm -f "$T/gpt"
+mkparts $PROV EFIESP $ANDR
+expect 'check-android: falls back to sysfs without parted' '^RESULT=OK$' env CITYMAN_FAKE_PARTED_FAIL=1 sh "$H" check-android
 
 mkparts boot
 want=$(head -c 8192 "$T/byname/boot" | sha256sum | cut -d' ' -f1)

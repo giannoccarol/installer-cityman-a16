@@ -127,6 +127,10 @@ function Confirm-Word([string]$Text, [string]$Word, [string]$StopText) {
     Write-Host ''
     Write-Host "    $Text" -ForegroundColor Yellow
     $a = Read-Answer "    Type $Word to continue (anything else stops)"
+    # The word is case-sensitive on purpose; say so instead of stopping on 'yes'.
+    if ($a -cne $Word -and $a -ieq $Word) {
+        $a = Read-Answer "    Type $Word in capital letters"
+    }
     if ($a -cne $Word) { Stop-Install $StopText }
 }
 function Confirm-YesNo([string]$Prompt) {
@@ -809,6 +813,14 @@ function Install-Efiesp {
     if (-not (Test-Path -LiteralPath $bootDir -PathType Container)) {
         Stop-Install "$bootDir not found. This does not look like the phone's EFIESP."
     }
+    # LK on EFIESP means Android was installed before: Clean or Update is usually meant.
+    if (Test-Path -LiteralPath (Join-Parts @($efi, 'emmc_appsboot.mbn')) -PathType Leaf) {
+        Write-Warn 'This EFIESP already has LK (emmc_appsboot.mbn): Android was installed on this phone before.'
+        Write-Info 'Full is for a phone still on Windows. If the phone starts LK or Android, choose Clean'
+        Write-Info '(erases all data) or Update (keeps data) instead.'
+        Write-Info 'If an earlier full install stopped after this step, run: installer.bat -Mode Full -Resume Partition'
+        Confirm-Word 'Run the full install anyway (EFIESP, Android partitions and provisioning are done again)?' 'FULL' 'Stopped: nothing was written. Run the installer again and choose Clean or Update.'
+    }
     if (Test-IsWindows) {
         try {
             $rootPath = [System.IO.Path]::GetPathRoot($efi)
@@ -916,6 +928,14 @@ function Invoke-Partitioning {
     # the list was confirmed above, so the answers are 'y'.
     [void](Invoke-Console $script:Adb @('shell', 'cd / && yes y | bash /tmp/partition.sh'))
 
+    Assert-AndroidLayout
+    Save-PartitionTable 'partition-table-after.txt'
+    Write-Ok 'Android partitions created, LK in aboot.'
+}
+
+# After partition.sh, in TWRP: Android partitions there, no Windows partition left,
+# LK in aboot (copied again when it is missing or different).
+function Assert-AndroidLayout {
     $lkSha = Get-Sha256File (Get-OfficialFile 'DATA/emmc_appsboot.mbn')
     $chk = Invoke-Helper "check-android $lkSha" 120 -AllowFail
     if (-not $chk.Ok) {
@@ -927,8 +947,19 @@ function Invoke-Partitioning {
         $fix = Invoke-Helper "put-lk /tmp/emmc_appsboot.mbn $lkSha" 120 -AllowFail
         if (-not $fix.Ok) { Stop-Install "LK could not be written to aboot: $($fix.Message). Do not reboot the phone; ask for help. Backups: $($script:BackupDir)" }
     }
+}
+
+# -Resume Modem with the phone still in TWRP after partition.sh (for example when an
+# older installer stopped at the partition check): check the layout and LK before
+# rebooting, since without LK in aboot the phone would not reach fastboot.
+function Test-ResumedLayout {
+    $d = @(Get-AdbDevices)
+    if ($d.Count -ne 1 -or $d[0].State -ne 'recovery') { return }
+    Write-Step 'Checking the Android partitions and LK before rebooting (phone still in TWRP)'
+    Wait-Twrp
+    Assert-AndroidLayout
     Save-PartitionTable 'partition-table-after.txt'
-    Write-Ok 'Android partitions created, LK in aboot.'
+    Write-Ok 'Android partitions in place, LK in aboot.'
 }
 
 function Invoke-RecoveryAndModem {
@@ -1173,6 +1204,7 @@ function Invoke-Main {
                 Install-Efiesp
             } else {
                 Write-Info "Resuming the full install at: $Resume."
+                if ($Resume -eq 'Modem') { Test-ResumedLayout }
                 Enter-Fastboot
             }
             if ($Resume -ne 'Modem') {

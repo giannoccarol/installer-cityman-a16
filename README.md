@@ -161,6 +161,15 @@ The first boot takes several minutes, longer after a clean install.
   or Update mode you can also install from the TWRP on the screen: Advanced > ADB
   Sideload, swipe, then `adb sideload <rom>.zip` (and the GApps zip the same way);
   for a clean install format data first (Wipe > Format Data).
+- "Partitioning did not complete: partition aboot is missing" (installer versions before
+  2026-11-14): the partitions were created, but the check read the partition names from
+  the kernel, which does not know the names of partitions created in the same TWRP
+  session. Leave the phone in TWRP, download the installer again and run
+  `installer.bat -Mode Full -Resume Modem`: with the phone still in TWRP it checks the
+  partitions and LK (and copies LK again if needed) before rebooting.
+- Confirmation words are case-sensitive: type `YES`, `ERASE`, `FULL` in capitals. A full
+  install on a phone whose EFIESP already has LK warns first: that phone has had Android,
+  and Clean or Update is usually what you want.
 - If a full install stops before you type `ERASE`, nothing was erased, but the phone
   starts LK instead of Windows. Leave it connected and run
   `installer.bat -Mode Full -Resume Partition`. To go back to Windows instead, copy the

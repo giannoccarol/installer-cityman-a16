@@ -36,23 +36,31 @@ fail() {
 sha_stdin() { sha256sum | cut -d' ' -f1; }
 sha_file() { sha256sum < "$1" | cut -d' ' -f1; }
 
-# GPT partition names as the kernel sees them.
-part_names() {
+# "NUMBER NAME" for each GPT partition. parted reads the table on the disk; the
+# kernel's PARTNAME (sysfs) stays empty for partitions that parted created in
+# this TWRP session (it adds them with BLKPG, which carries no name) until the
+# next boot, so after partition.sh sysfs alone does not see the Android names.
+part_table() {
+    t=$(parted -s -m "$DISK" unit s print 2>/dev/null | awk -F: '$1 ~ /^[0-9]+$/ && $6 != "" {print $1, $6}')
+    if [ -n "$t" ]; then
+        echo "$t"
+        return 0
+    fi
     for u in "$SYSBLOCK"/mmcblk0p*/uevent; do
-        [ -f "$u" ] && sed -n 's/^PARTNAME=//p' "$u"
+        [ -f "$u" ] || continue
+        n=$(sed -n 's/^PARTN=//p' "$u")
+        name=$(sed -n 's/^PARTNAME=//p' "$u")
+        [ -n "$n" ] && [ -n "$name" ] && echo "$n $name"
     done
 }
+# GPT partition names.
+part_names() { part_table | awk '{print $2}'; }
 has_part() { part_names | grep -qx "$1"; }
 # Partition name -> device node (/dev/block/mmcblk0pN).
 part_dev() {
-    for u in "$SYSBLOCK"/mmcblk0p*/uevent; do
-        [ -f "$u" ] || continue
-        if grep -qx "PARTNAME=$1" "$u"; then
-            echo "$DEVBLOCK/$(sed -n 's/^DEVNAME=//p' "$u")"
-            return 0
-        fi
-    done
-    return 1
+    n=$(part_table | awk -v p="$1" '$2 == p {print $1; exit}')
+    [ -n "$n" ] || return 1
+    echo "$DEVBLOCK/mmcblk0p$n"
 }
 need_tool() {
     for t in "$@"; do

@@ -82,6 +82,7 @@ check full-lk 'LK copied again with put-lk' '[ -f lk-fixed ] && grep -q "put-lk 
 rm -rf "$REPO/backups"
 
 # 3. Full install, user does not type ERASE: nothing erased.
+rm -rf "$T/efiesp"; mkdir -p "$T/efiesp/EFI/Microsoft/BOOT" "$T/efiesp/Windows/System32/BOOT"; echo x > "$T/efiesp/EFI/Microsoft/BOOT/BCD"
 FAKE_LK_BAD= run full-stop fastboot '\nYES\nno\n' -Mode Full -EfiEsp "$T/efiesp" -OfficialDir "$T/official"
 check full-stop 'exit code 1' '[ "$(cat rc)" = 1 ]'
 check full-stop 'partition.sh not run' '[ ! -f partitioned ]'
@@ -207,6 +208,29 @@ check update-loop 'exit code 0, ROM and GApps installed' '[ "$(cat rc)" = 0 ] &&
 # 23. A ROM zip given as GApps is refused before touching the phone.
 run gapps-is-rom device '' -Mode Update -Gapps "$ROM"
 check gapps-is-rom 'exit code 1, phone untouched' '[ "$(cat rc)" = 1 ] && ! grep -qE "fastboot boot|reboot" calls.log && grep -q "looks like a ROM" out.txt'
+
+# 28. Confirmation typed in lower case: asked again in capitals, then the install goes on.
+rm -rf "$T/efiesp"; mkdir -p "$T/efiesp/EFI/Microsoft/BOOT" "$T/efiesp/Windows/System32/BOOT"; echo x > "$T/efiesp/EFI/Microsoft/BOOT/BCD"
+run full-lower fastboot '\nyes\nYES\nERASE\n' -Mode Full -EfiEsp "$T/efiesp" -OfficialDir "$T/official"
+check full-lower 'exit code 0 after YES in capitals' '[ "$(cat rc)" = 0 ] && [ "$(cat installed)" = "sideload $ROM_SHA" ]'
+rm -rf "$REPO/backups"
+
+# 29. Full install on a phone that already has LK on EFIESP: warns, stops unless FULL is typed.
+rm -rf "$T/efiesp"; mkdir -p "$T/efiesp/EFI/Microsoft/BOOT" "$T/efiesp/Windows/System32/BOOT"; echo lk-bcd > "$T/efiesp/EFI/Microsoft/BOOT/BCD"
+echo old-lk > "$T/efiesp/emmc_appsboot.mbn"
+run full-haslk fastboot '\nYES\n' -Mode Full -EfiEsp "$T/efiesp" -OfficialDir "$T/official"
+check full-haslk 'exit code 1, EFIESP untouched, phone untouched' '[ "$(cat rc)" = 1 ] && grep -q lk-bcd "$T/efiesp/EFI/Microsoft/BOOT/BCD" && ! grep -qE "fastboot (boot|flash)|adb (reboot|shell|push)" calls.log'
+check full-haslk 'says to choose Clean or Update' 'grep -q "already has LK" out.txt && grep -q "choose Clean or Update" out.txt'
+run full-haslk-go fastboot '\nFULL\nYES\nERASE\n' -Mode Full -EfiEsp "$T/efiesp" -OfficialDir "$T/official"
+check full-haslk-go 'FULL typed: full install goes on' '[ "$(cat rc)" = 0 ] && [ -f partitioned ] && [ "$(cat installed)" = "sideload $ROM_SHA" ]'
+rm -rf "$REPO/backups"
+
+# 30. -Resume Modem with the phone still in TWRP after partition.sh (older installer
+# stopped at the partition check): layout and LK checked, LK copied again, then on.
+FAKE_LK_BAD=1 run resume-twrp recovery '' -Mode Full -Resume Modem -OfficialDir "$T/official"
+check resume-twrp 'exit code 0, installed' '[ "$(cat rc)" = 0 ] && [ "$(cat installed)" = "sideload $ROM_SHA" ]'
+check resume-twrp 'layout and LK checked in TWRP before rebooting, LK copied again' 'awk "/helper.sh check-android [0-9a-f]{64}/{c=1} /adb reboot bootloader/{exit !c}" calls.log && [ -f lk-fixed ]'
+rm -rf "$REPO/backups"
 
 # 24-25. adb and fastboot found next to the installer, not on PATH (copy of the
 # installer in its own folder, PATH with only the commands the fakes need).
