@@ -132,7 +132,7 @@ The first boot takes several minutes, longer after a clean install.
 
 `lk\emmc_appsboot.mbn` is lk2nd built as lk1st (the first bootloader after the boot shim)
 for the Lumia 950 XL, from the
-[`cityman` branch of lumia-msm8974/lk2nd](https://github.com/lumia-msm8974/lk2nd/tree/cityman)
+[`cityman` branch of giannoccarol/lk2nd-cityman](https://github.com/giannoccarol/lk2nd-cityman/tree/cityman)
 (see `lk\README.txt` for the commit and build options). It is the official LK
 (Android4Lumia950 lk2nd `80dcd67`) with a driver for the 950 XL panel added:
 

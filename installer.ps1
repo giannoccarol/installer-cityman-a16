@@ -83,7 +83,7 @@ $UsbDriverUrl = 'https://developer.android.com/studio/run/win-usb'
 $RemoteHelper = '/tmp/cityman-a16-helper.sh'
 # LK with the bootloader menu on screen (lk2nd, branch cityman; see lk/README.txt).
 $LkRel = 'lk/emmc_appsboot.mbn'
-$LkSourceUrl = 'https://github.com/lumia-msm8974/lk2nd/tree/cityman'
+$LkSourceUrl = 'https://github.com/giannoccarol/lk2nd-cityman/tree/cityman'
 $Stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 
 $Provisioned = @('APDP', 'DBI', 'DDR', 'DPO', 'DPP', 'LIMITS', 'MODEM_FS1', 'MODEM_FS2',

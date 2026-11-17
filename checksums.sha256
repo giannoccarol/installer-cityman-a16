@@ -20,7 +20,7 @@ b5ac4ffcbf22f3da43d7a5896c55d0e808d0c0da3cebde76fe44a93c93b7ab15  official/provi
 4037483f9073a1b3a31c4b468cafc34eef62bc6d51f423f8d6e35ef6f4317185  official/partition.sh+exact-name-fix
 #
 # LK with the bootloader menu on screen (lk/emmc_appsboot.mbn): lk2nd branch cityman
-# of lumia-msm8974/lk2nd, commit 3394d965, project lk1st-msm8994 (see lk/README.txt).
+# of giannoccarol/lk2nd-cityman, commit 3394d965, project lk1st-msm8994 (see lk/README.txt).
 31100f058bb82234fea846177ee8a95bdfb370d11cd45e27b91c2d530f16ce12  lk/emmc_appsboot.mbn
 #
 # Android 16 TWRP (twrp-cityman-a16.img, 2026-10-30). Add a line here when a new

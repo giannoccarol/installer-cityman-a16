@@ -1,6 +1,6 @@
 emmc_appsboot.mbn: LK (lk1st) for the Lumia 950 XL with the bootloader menu on screen.
 
-Built from lk2nd, branch cityman of https://github.com/lumia-msm8974/lk2nd
+Built from lk2nd, branch cityman of https://github.com/giannoccarol/lk2nd-cityman
 (commit 3394d965, based on Android4Lumia950/lk2nd 80dcd678, the version of the
 official LK), project lk1st-msm8994, LK2ND_BUNDLE_DTB=msm8994-msft-cityman.dtb,
 LK2ND_DISPLAY=sergej_wqhd_dualdsi_cmd.
