@@ -14,6 +14,11 @@
     Update  Phone already on this LineageOS 23.2 port. Boots the Android 16 TWRP
             and sideloads the ROM. Data is kept.
 
+    Bootloader: every mode installs the LK in the 'lk' folder (lk2nd with a driver
+    for the 950 XL panel: the fastboot menu is shown on screen). Full writes it to
+    EFIESP instead of the official LK; Clean and Update replace the LK in the aboot
+    partition when it is a different one, unless -KeepLk is given.
+
     Google apps: put the GApps zip in the 'gapps' folder (or pass -Gapps) and it is
     sideloaded right after the ROM. An update over a system with GApps needs it:
     without them again Android does not finish booting.
@@ -38,6 +43,8 @@ param(
     [string]$Gapps = '',
     # Update without GApps even if the installed system has them (Android may not boot).
     [switch]$NoGapps,
+    # Clean and Update: leave the LK in the aboot partition as it is.
+    [switch]$KeepLk,
     # Android 16 TWRP image. Default: twrp\twrp-cityman-a16.img.
     [string]$Twrp = '',
     # EFIESP folder of the phone in mass storage mode (Full mode). Default: folder dialog.
@@ -74,6 +81,9 @@ $PlatformToolsZip = "platform-tools_r$PlatformToolsVersion-win.zip"
 $PlatformToolsZipUrl = "https://dl.google.com/android/repository/$PlatformToolsZip"
 $UsbDriverUrl = 'https://developer.android.com/studio/run/win-usb'
 $RemoteHelper = '/tmp/cityman-a16-helper.sh'
+# LK with the bootloader menu on screen (lk2nd, branch cityman; see lk/README.txt).
+$LkRel = 'lk/emmc_appsboot.mbn'
+$LkSourceUrl = 'https://github.com/lumia-msm8974/lk2nd/tree/cityman'
 $Stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 
 $Provisioned = @('APDP', 'DBI', 'DDR', 'DPO', 'DPP', 'LIMITS', 'MODEM_FS1', 'MODEM_FS2',
@@ -94,6 +104,8 @@ $script:OfficialRoot = $null
 $script:WorkDir = $null
 $script:BackupDir = $null
 $script:TwrpPath = $null
+$script:LkPath = $null
+$script:LkSha = $null
 $script:RomPath = $null
 $script:GappsPath = $null
 $script:InstalledGapps = $false
@@ -702,6 +714,18 @@ function Resolve-Twrp {
     Write-Ok "$path"
 }
 
+function Resolve-Lk {
+    $path = Join-Parts (@($Root) + $LkRel.Split('/'))
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        Stop-Install "$path is missing. Download the installer again (the lk folder comes with it)."
+    }
+    $sha = Get-Sha256File $path
+    Assert-Pinned $LkRel $sha "The LK file $path" 'Download the installer again.'
+    $script:LkPath = $path
+    $script:LkSha = $sha
+    Write-Ok "LK with the bootloader menu: $path"
+}
+
 function Get-OfficialFile([string]$Rel) {
     return (Join-Parts (@($script:OfficialRoot) + $Rel.Split('/')))
 }
@@ -839,9 +863,9 @@ function Install-Efiesp {
         @{ Src = 'ui/boot.ums.connected.bmpx'; Dst = (Join-Parts @($bootDir, 'ui', 'boot.ums.connected.bmpx')) },
         @{ Src = 'ui/boot.ums.disconnected.bmpx'; Dst = (Join-Parts @($bootDir, 'ui', 'boot.ums.disconnected.bmpx')) },
         @{ Src = 'ui/boot.ums.waiting.bmpx'; Dst = (Join-Parts @($bootDir, 'ui', 'boot.ums.waiting.bmpx')) },
-        @{ Src = 'DATA/emmc_appsboot.mbn'; Dst = (Join-Parts @($efi, 'emmc_appsboot.mbn')) }
+        @{ Path = $script:LkPath; Dst = (Join-Parts @($efi, 'emmc_appsboot.mbn')) }
     )
-    Confirm-Word "EFIESP: $efi. The BCD is replaced and the Developer Menu, boot shim, Stage2 and LK are copied there (the files they replace are backed up first)." 'YES' 'Stopped before changing EFIESP. Nothing was written.'
+    Confirm-Word "EFIESP: $efi. The BCD is replaced and the Developer Menu, boot shim, Stage2 and LK (with the bootloader menu) are copied there (the files they replace are backed up first)." 'YES' 'Stopped before changing EFIESP. Nothing was written.'
 
     $bk = Join-Parts @($script:BackupDir, 'EFIESP')
     foreach ($c in $copies) {
@@ -855,7 +879,7 @@ function Install-Efiesp {
     Write-Info "Original EFIESP files saved in $bk"
     New-Item -ItemType Directory -Force -Path (Join-Parts @($bootDir, 'ui')) | Out-Null
     foreach ($c in $copies) {
-        $src = Get-OfficialFile $c.Src
+        if ($c.ContainsKey('Path')) { $src = $c.Path } else { $src = Get-OfficialFile $c.Src }
         Copy-Item -LiteralPath $src -Destination $c.Dst -Force
         if ((Get-Sha256File $c.Dst) -ne (Get-Sha256File $src)) {
             Stop-Install "Copy to $($c.Dst) failed (the file on EFIESP differs). Originals are in $bk."
@@ -936,14 +960,14 @@ function Invoke-Partitioning {
 # After partition.sh, in TWRP: Android partitions there, no Windows partition left,
 # LK in aboot (copied again when it is missing or different).
 function Assert-AndroidLayout {
-    $lkSha = Get-Sha256File (Get-OfficialFile 'DATA/emmc_appsboot.mbn')
+    $lkSha = $script:LkSha
     $chk = Invoke-Helper "check-android $lkSha" 120 -AllowFail
     if (-not $chk.Ok) {
         if ($chk.Message -notmatch '^LK:') {
             Stop-Install "Partitioning did not complete: $($chk.Message). Do not reboot the phone. Backups: $($script:BackupDir)"
         }
         Write-Warn 'LK is not in the aboot partition: copying it again.'
-        Send-File (Get-OfficialFile 'DATA/emmc_appsboot.mbn') '/tmp/emmc_appsboot.mbn'
+        Send-File $script:LkPath '/tmp/emmc_appsboot.mbn'
         $fix = Invoke-Helper "put-lk /tmp/emmc_appsboot.mbn $lkSha" 120 -AllowFail
         if (-not $fix.Ok) { Stop-Install "LK could not be written to aboot: $($fix.Message). Do not reboot the phone; ask for help. Backups: $($script:BackupDir)" }
     }
@@ -997,6 +1021,31 @@ function Invoke-Provisioning {
         Write-Warn "The originals are in $($script:BackupDir)\provisioned. Without them Wi-Fi/Bluetooth may use random MAC addresses or the modem may lack its data."
         Confirm-Word 'Install the ROM anyway?' 'CONTINUE' 'Stopped after provisioning. The phone is partitioned: to provision again run installer.bat -Mode Full -Resume Modem (or Clean mode to install the ROM without provisioning).'
     }
+}
+
+# Clean and Update, in TWRP: replace the LK in aboot when it is not this installer's.
+function Update-Lk {
+    if ($KeepLk) {
+        Write-Info 'LK in the aboot partition left as it is (-KeepLk).'
+        return
+    }
+    Write-Step 'Bootloader (LK) with the menu on screen'
+    $r = Invoke-Helper 'lk-sha' 120 -AllowFail -Quiet
+    if (-not $r.Ok) {
+        Write-Warn "Could not read the LK in the aboot partition ($($r.Message)). LK is left as it is."
+        return
+    }
+    if ($r.Message -eq $script:LkSha) {
+        Write-Ok 'The LK in aboot is already this one.'
+        return
+    }
+    Write-Info 'Replacing the LK in the aboot partition: fastboot will show its menu on screen.'
+    Send-File $script:LkPath '/tmp/emmc_appsboot.mbn'
+    $fix = Invoke-Helper "put-lk /tmp/emmc_appsboot.mbn $($script:LkSha)" 120 -AllowFail
+    if (-not $fix.Ok) {
+        Stop-Install "LK could not be written to aboot: $($fix.Message). Do not reboot the phone (it is in TWRP): run the installer again, or ask for help."
+    }
+    Write-Ok 'LK updated.'
 }
 
 function Invoke-Wipe {
@@ -1193,6 +1242,7 @@ function Invoke-Main {
         Initialize-Tools ''
     }
     Resolve-Twrp
+    Resolve-Lk
     Resolve-Rom
     Resolve-Gapps
 
@@ -1222,6 +1272,7 @@ function Invoke-Main {
             Start-A16Twrp
             [void](Invoke-Helper 'check-android')
             Confirm-Word 'Clean install: ALL data on the phone is erased, internal storage included.' 'ERASE' 'Stopped before erasing. Nothing was written; the phone is in TWRP.'
+            Update-Lk
             Invoke-Wipe
         }
         'Update' {
@@ -1229,6 +1280,7 @@ function Invoke-Main {
             Start-A16Twrp
             [void](Invoke-Helper 'check-android')
             Test-InstalledSystem
+            Update-Lk
         }
     }
     Invoke-Sideload $script:RomPath 'ROM' 'about 4-5 minutes'

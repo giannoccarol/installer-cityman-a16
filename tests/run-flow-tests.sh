@@ -34,6 +34,7 @@ TWRP_SHA=$(sha256sum "$TWRP" | cut -c1-64)
 OFF_TWRP_SHA=$(sha256sum "$OFFICIAL/DATA/twrp.img" | cut -c1-64)
 MODEM_SHA=$(sha256sum "$OFFICIAL/DATA/modem.img" | cut -c1-64)
 ROM_SHA=$(sha256sum "$ROM" | cut -c1-64)
+LK_SHA=$(sha256sum "$REPO/lk/emmc_appsboot.mbn" | cut -c1-64)
 
 # run NAME INITIAL_STATE STDIN [installer args...]
 run() {
@@ -62,7 +63,7 @@ echo original-bcd > "$T/efiesp/EFI/Microsoft/BOOT/BCD"
 run full fastboot '\nYES\nERASE\n' -Mode Full -EfiEsp "$T/efiesp" -OfficialDir "$T/official"
 check full 'exit code 0' '[ "$(cat rc)" = 0 ]'
 check full 'BCD replaced by the official one' 'cmp -s "$OFFICIAL/DATA/BCD" "$T/efiesp/EFI/Microsoft/BOOT/BCD"'
-check full 'LK, Stage2, bootshim, developermenu, ui copied' 'cmp -s "$OFFICIAL/DATA/emmc_appsboot.mbn" "$T/efiesp/emmc_appsboot.mbn" && cmp -s "$OFFICIAL/DATA/Stage2.efi" "$T/efiesp/Stage2.efi" && cmp -s "$OFFICIAL/DATA/bootshim.efi" "$T/efiesp/Windows/System32/BOOT/bootshim.efi" && cmp -s "$OFFICIAL/DATA/developermenu.efi" "$T/efiesp/Windows/System32/BOOT/developermenu.efi" && [ -f "$T/efiesp/Windows/System32/BOOT/ui/boot.ums.waiting.bmpx" ]'
+check full 'LK (with the menu), Stage2, bootshim, developermenu, ui copied' 'cmp -s "$REPO/lk/emmc_appsboot.mbn" "$T/efiesp/emmc_appsboot.mbn" && cmp -s "$OFFICIAL/DATA/Stage2.efi" "$T/efiesp/Stage2.efi" && cmp -s "$OFFICIAL/DATA/bootshim.efi" "$T/efiesp/Windows/System32/BOOT/bootshim.efi" && cmp -s "$OFFICIAL/DATA/developermenu.efi" "$T/efiesp/Windows/System32/BOOT/developermenu.efi" && [ -f "$T/efiesp/Windows/System32/BOOT/ui/boot.ums.waiting.bmpx" ]'
 check full 'original BCD backed up' 'grep -q original-bcd "$REPO"/backups/cityman-*/EFIESP/EFI/Microsoft/BOOT/BCD'
 check full '15 provisioning partitions pulled + SHA256SUMS' '[ "$(ls "$REPO"/backups/cityman-*/provisioned/*.bin | wc -l)" = 15 ] && ls "$REPO"/backups/cityman-*/provisioned/SHA256SUMS'
 check full 'fixed partition.sh (LF) was run' '[ -f partitioned ]'
@@ -72,13 +73,14 @@ check full 'provision.sh run' '[ -f provisioned ]'
 check full 'format data, wipe cache, wipe dalvik' 'diff <(printf "format data\nwipe cache\nwipe dalvik\n") wiped'
 check full 'ROM sideloaded after retrying twrp sideload' '[ "$(cat installed)" = "sideload $ROM_SHA" ] && [ "$(cat n-sideload)" = 2 ]'
 check full 'rebooted at the end' '[ "$(cat state)" = off ]'
+check full 'LK in aboot checked against the new LK' 'grep -q "helper.sh check-android $LK_SHA" calls.log'
 rm -rf "$REPO/backups"
 
 # 2. Full install where LK is missing from aboot after partition.sh.
 rm -rf "$T/efiesp"; mkdir -p "$T/efiesp/EFI/Microsoft/BOOT" "$T/efiesp/Windows/System32/BOOT"; echo x > "$T/efiesp/EFI/Microsoft/BOOT/BCD"
 FAKE_LK_BAD=1 run full-lk fastboot '\nYES\nERASE\n' -Mode Full -EfiEsp "$T/efiesp" -OfficialDir "$T/official"
 check full-lk 'exit code 0' '[ "$(cat rc)" = 0 ]'
-check full-lk 'LK copied again with put-lk' '[ -f lk-fixed ] && grep -q "put-lk /tmp/emmc_appsboot.mbn" calls.log'
+check full-lk 'LK copied again with put-lk' '[ -f lk-fixed ] && grep -q "put-lk /tmp/emmc_appsboot.mbn $LK_SHA" calls.log && cmp -s remote/emmc_appsboot.mbn "$REPO/lk/emmc_appsboot.mbn"'
 rm -rf "$REPO/backups"
 
 # 3. Full install, user does not type ERASE: nothing erased.
@@ -95,16 +97,26 @@ check clean 'exit code 0' '[ "$(cat rc)" = 0 ]'
 check clean 'only the A16 TWRP booted, nothing flashed' '[ "$(cat booted-image)" = "$TWRP_SHA" ] && [ ! -f flashed ] && [ ! -f partitioned ]'
 check clean 'format data, wipe cache, wipe dalvik' 'diff <(printf "format data\nwipe cache\nwipe dalvik\n") wiped'
 check clean 'ROM sideloaded, rebooted' '[ "$(cat installed)" = "sideload $ROM_SHA" ] && [ "$(cat state)" = off ]'
+check clean 'official LK in aboot replaced by the new one' '[ "$(cat lk-written)" = "$LK_SHA" ] && cmp -s remote/emmc_appsboot.mbn "$REPO/lk/emmc_appsboot.mbn"'
 
 # 5. Clean install, user does not confirm: no wipe, no sideload.
 run clean-stop device 'nope\n' -Mode Clean
-check clean-stop 'exit code 1, no wipe, no sideload' '[ "$(cat rc)" = 1 ] && [ ! -f wiped ] && [ ! -f installed ]'
+check clean-stop 'exit code 1, no wipe, no sideload, LK untouched' '[ "$(cat rc)" = 1 ] && [ ! -f wiped ] && [ ! -f installed ] && [ ! -f lk-written ]'
 
 # 6. Update (phone on LineageOS 23.2): no wipe.
 run update device '' -Mode Update
 check update 'exit code 0' '[ "$(cat rc)" = 0 ]'
 check update 'no wipe' '[ ! -f wiped ]'
 check update 'ROM sideloaded, rebooted' '[ "$(cat installed)" = "sideload $ROM_SHA" ] && [ "$(cat state)" = off ]'
+check update 'official LK replaced by the new one before the sideload' '[ "$(cat lk-written)" = "$LK_SHA" ] && awk "/helper.sh put-lk/{p=1} /adb sideload/{exit !p}" calls.log'
+
+# 6b. Update with the new LK already in aboot: not written again.
+FAKE_LK_SHA=$LK_SHA run update-lk-same device '' -Mode Update
+check update-lk-same 'exit code 0, LK not written' '[ "$(cat rc)" = 0 ] && [ ! -f lk-written ] && grep -q "helper.sh lk-sha" calls.log && grep -q "already this one" out.txt'
+
+# 6c. Update with -KeepLk: the LK is not even read.
+run update-keeplk device '' -Mode Update -KeepLk
+check update-keeplk 'exit code 0, LK not read nor written' '[ "$(cat rc)" = 0 ] && ! grep -q "helper.sh lk-sha" calls.log && [ ! -f lk-written ] && [ "$(cat installed)" = "sideload $ROM_SHA" ]'
 
 # 7. Update over LineageOS 18.1: asks, user refuses.
 FAKE_INSTALLED='sdk=30 lineage=18.1 device=talkman' run update-other device 'no\n' -Mode Update
@@ -239,7 +251,7 @@ for c in bash env cat cp mkdir basename sha256sum cut unzip head wc grep sleep t
     ln -sf "$(command -v $c)" "$BARE/$c"
 done
 INST="$T/inst"; mkdir -p "$INST/platform-tools"
-cp "$REPO/installer.ps1" "$REPO/checksums.sha256" "$INST/"; cp -r "$REPO/device" "$INST/"
+cp "$REPO/installer.ps1" "$REPO/checksums.sha256" "$INST/"; cp -r "$REPO/device" "$REPO/lk" "$INST/"
 PWSH=$(command -v pwsh)
 run_bare() {  # run_bare NAME STATE [installer args...]
     local name=$1 state=$2; shift 2

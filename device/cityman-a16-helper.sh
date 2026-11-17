@@ -166,6 +166,20 @@ cmd_put_lk() {
     ok
 }
 
+# Clean/Update: SHA-256 of the LK in aboot, "none" when there is no LK file.
+cmd_lk_sha() {
+    dev=$(part_dev aboot) || fail "aboot partition not found"
+    mnt=/tmp/cityman-aboot
+    mkdir -p "$mnt"
+    umount "$mnt" 2>/dev/null
+    mount -t vfat -o ro "$dev" "$mnt" 2>/dev/null || fail "cannot mount the aboot partition"
+    h=none
+    [ -f "$mnt/emmc_appsboot.mbn" ] && h=$(sha_file "$mnt/emmc_appsboot.mbn")
+    umount "$mnt" 2>/dev/null
+    [ -n "$h" ] || fail "cannot read emmc_appsboot.mbn in aboot"
+    ok "$h"
+}
+
 # Before the official provision.sh.
 cmd_pre_provision() {
     need_tool parted hexdump dd
@@ -304,6 +318,7 @@ case "$cmd" in
     backup) cmd_backup "$@" ;;
     check-android) cmd_check_android "$@" ;;
     put-lk) cmd_put_lk "$@" ;;
+    lk-sha) cmd_lk_sha ;;
     pre-provision) cmd_pre_provision ;;
     check-provision) cmd_check_provision ;;
     installed-version) cmd_installed_version ;;

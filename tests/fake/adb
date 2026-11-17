@@ -90,7 +90,11 @@ case "$cmd" in
                 if [ -n "$2" ] && [ -n "${FAKE_LK_BAD:-}" ] && [ ! -f "$S/lk-fixed" ]; then
                     echo "RESULT=FAIL:LK: emmc_appsboot.mbn is missing or different in the aboot partition"
                 else echo RESULT=OK; fi ;;
-            put-lk) touch "$S/lk-fixed"; echo RESULT=OK ;;
+            put-lk) touch "$S/lk-fixed"; echo "$3" > "$S/lk-written"; echo RESULT=OK ;;
+            lk-sha)
+                # Default: the official Android4Lumia950 LK (black screen in fastboot).
+                if [ -f "$S/lk-written" ]; then echo "RESULT=OK:$(cat "$S/lk-written")"
+                else echo "RESULT=OK:${FAKE_LK_SHA:-392cabea0594c0b37f3986527ad95b6b480a554a81b7621587f9c1f11cf2fa6f}"; fi ;;
             pre-provision) echo RESULT=OK ;;
             check-provision) echo RESULT=OK ;;
             installed-version) echo "RESULT=OK:${FAKE_INSTALLED:-sdk=36 lineage=23.2 device=cityman gapps=no}" ;;

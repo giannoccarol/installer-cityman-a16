@@ -17,6 +17,14 @@ Experimental. It erases Windows on the phone (full install) or all user data
 | **Clean** | LK and Android partitions already there (for example LineageOS 18.1 from the official installer, or an earlier build of this port) | Android 16 TWRP, format data, wipe cache and Dalvik, ROM | All data erased, internal storage included |
 | **Update** | This LineageOS 23.2 port | Android 16 TWRP, ROM | Kept |
 
+**Bootloader menu.** Every mode installs the LK in `lk\` (lk2nd with a driver for the
+950 XL panel): in fastboot the phone shows the lk2nd menu, Continue, Reboot, Recovery,
+Bootloader and Power off, with the volume keys to move and the power key to select.
+The official LK leaves the screen black there. Full writes it to EFIESP in place of
+the official LK. Clean and Update read the LK in the `aboot` partition and replace it
+when it is a different one (for example the official LK), before the ROM;
+`-KeepLk` leaves it as it is. Details in [Bootloader (LK)](#bootloader-lk).
+
 ## Requirements
 
 - A Windows 10 or 11 PC (Windows PowerShell 5.1, included in Windows).
@@ -43,6 +51,7 @@ Download this repository, then put next to `installer.bat`:
 | `twrp\` | `twrp-cityman-a16.img` | [release page](https://github.com/giannoccarol/android_device_msft_cityman/releases) of the device tree |
 | `official\` | the official installer at commit `5c215fd` | downloaded by the installer in full mode (about 110 MB), or put it there yourself |
 | `gapps\` | optional: one GApps zip for Android 16, arm64 (for example NikGapps core) | the GApps project's page |
+| `lk\` | `emmc_appsboot.mbn`, LK with the bootloader menu on screen | included in this repository (see [Bootloader (LK)](#bootloader-lk)) |
 
 **Google apps.** An update replaces the system partition, and GApps live there: if the
 phone has GApps, put the same GApps zip in `gapps\` before an update. The installer
@@ -51,7 +60,7 @@ and `gapps\` is empty, the update stops before writing anything, because Android
 not finish booting when the GApps disappear from under their data.
 
 The installer checks the SHA-256 of every file before it writes it: the ROM against
-`SHA256SUMS` (or `-RomSha256`), the TWRP and the official files against
+`SHA256SUMS` (or `-RomSha256`), the TWRP, the LK and the official files against
 [`checksums.sha256`](checksums.sha256). The official files are pinned to commit
 [`5c215fd`](https://github.com/Android4Lumia950/installer/commit/5c215fda5daf73866a93dfad3b6473253552dfe5)
 of `cityman-temp`, the version this installer was checked with.
@@ -71,6 +80,7 @@ installer.bat -Mode Update -Rom D:\roms\lineage-23.2-20261030-UNOFFICIAL-cityman
 | `-RomSha256 <hash>` | expected SHA-256 of the zip, if there is no `SHA256SUMS` file |
 | `-Gapps <zip>` | GApps zip sideloaded after the ROM (default: the only `.zip` in `gapps\`) |
 | `-NoGapps` | update without GApps even if the installed system has them (Android may not boot until you install them or format data) |
+| `-KeepLk` | Clean and Update: leave the LK in the `aboot` partition as it is |
 | `-Twrp <img>` | Android 16 TWRP (default: `twrp\twrp-cityman-a16.img`) |
 | `-EfiEsp <folder>` | the phone's EFIESP drive in full mode (default: folder dialog) |
 | `-OfficialDir <folder>` | official installer files (default: `official\`) |
@@ -88,10 +98,10 @@ A log of each run is written to `logs\`.
    with Win32DiskImager is recommended at this point.
 3. Run `installer.bat`, choose **1**, and select the phone's EFIESP drive (it may also
    be mounted inside MainOS). The installer backs up the files it replaces, then writes
-   the BCD, `bootshim.efi`, `Stage2.efi`, `developermenu.efi`, the UI images and LK
-   (`emmc_appsboot.mbn`), as the official `installer.bat` does.
+   the BCD, `bootshim.efi`, `Stage2.efi`, `developermenu.efi`, the UI images, as the
+   official `installer.bat` does, and LK (`emmc_appsboot.mbn`) from `lk\`.
 4. Eject the phone's drives and hold the power key until it restarts. After some text
-   the screen goes black: the phone is in LK (fastboot). If Windows shows an unknown
+   the phone shows the lk2nd menu: it is in LK (fastboot). If Windows shows an unknown
    "Android" device, install the USB driver.
 5. The installer boots the official TWRP, saves the 15 provisioning partitions
    (`APDP DBI DDR DPO DPP LIMITS MODEM_FS1 MODEM_FS2 MODEM_FSC MODEM_FSG MSADP SEC SSD
@@ -118,8 +128,28 @@ system has GApps and no GApps zip was given.
 
 The first boot takes several minutes, longer after a clean install.
 
+## Bootloader (LK)
+
+`lk\emmc_appsboot.mbn` is lk2nd built as lk1st (the first bootloader after the boot shim)
+for the Lumia 950 XL, from the
+[`cityman` branch of lumia-msm8974/lk2nd](https://github.com/lumia-msm8974/lk2nd/tree/cityman)
+(see `lk\README.txt` for the commit and build options). It is the official LK
+(Android4Lumia950 lk2nd `80dcd67`) with a driver for the 950 XL panel added:
+
+- the UEFI switches the display off before LK starts, so the official LK cannot reuse
+  the screen and fastboot stays black; this LK powers the panel up again (the same rails
+  and voltages as the Android kernel) and drives it, then shows the lk2nd menu;
+- Android is started exactly as before; the kernel sets the panel up again on its own.
+
+To go back to the official LK: run Update with the official file in `lk\` and its
+SHA-256 in `checksums.sha256`, or from TWRP mount `aboot` (vfat) and copy the official
+`emmc_appsboot.mbn` over the new one. If LK did not start at all, the Developer Menu
+(boot manager entry) or WPInternals mass storage mode give access to `aboot` from a PC.
+
 ## Differences from the official installer
 
+- LK is the one in `lk\` (bootloader menu on screen) instead of the official
+  `DATA\emmc_appsboot.mbn`, and Clean and Update bring it to phones installed earlier.
 - After provisioning, the Android 16 TWRP is booted with `fastboot boot` and the ROM is
   installed by the installer (format, sideload, checks) instead of asking for a
   LineageOS 18.1 sideload and flashing its kernel. On this phone LK does not start the
@@ -199,7 +229,8 @@ The first boot takes several minutes, longer after a clean install.
 - `tests/run-flow-tests.sh OFFICIAL_DIR TWRP_IMG` runs `installer.ps1` with PowerShell 7
   against a fake `adb` and `fastboot` (`tests/fake/`) that simulate LK and TWRP,
   including the `twrp sideload` race and the sideload transfer error. Scenarios: full
-  install, LK repair, refusals at every confirmation, clean, update, update over another
+  install, LK repair, LK update in Clean and Update (skipped when already current or
+  with `-KeepLk`), refusals at every confirmation, clean, update, update over another
   system, wrong ROM or TWRP checksum, ROM for another device, `boot` mismatch, adb and
   fastboot next to the installer or missing, TWRP that never takes commands.
 - `tests/helper-tests.sh` tests the phone-side helper on a fake sysfs/by-name tree.
@@ -215,6 +246,10 @@ The first boot takes several minutes, longer after a clean install.
   parted) and the installation video.
 - **TeamWin**: [TWRP](https://twrp.me). The Android 16 TWRP is the Android4Lumia950
   cityman TWRP with the Android 16 kernel and a fixed linker search path.
+- **lk2nd** ([msm8916-mainline/lk2nd](https://github.com/msm8916-mainline/lk2nd), Stephan
+  Gerhold and contributors) and the [Android4Lumia950 lk2nd fork](https://github.com/Android4Lumia950/lk2nd)
+  the LK in `lk\` is built from; the panel driver follows Qualcomm's LK display code for
+  the MSM8994 reference phones and the panel settings of the Android4Lumia950 MMO kernel.
 - [WPInternals](https://github.com/ReneLergner/WPinternals) (René Lergner) for unlocking
   and mass storage mode; Google for the Android SDK Platform Tools and USB driver.
 

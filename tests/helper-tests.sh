@@ -1,7 +1,8 @@
 #!/bin/sh
 # Unit tests for device/cityman-a16-helper.sh on a fake sysfs/by-name tree.
 # Run with the shell to test, e.g. busybox:  docker run --rm -v "$PWD:/r:ro" alpine sh /r/tests/helper-tests.sh
-# Commands that need mount (check-provision, installed-version, LK checks) are not covered.
+# Commands that need mount (check-provision, installed-version, LK checks, lk-sha on a
+# real aboot) are not covered.
 HERE=$(cd "$(dirname "$0")" && pwd)
 H="$HERE/../device/cityman-a16-helper.sh"
 T=$(mktemp -d)
@@ -50,6 +51,8 @@ expect() {  # expect DESC PATTERN COMMAND...
 PROV="APDP DBI DDR DPO DPP LIMITS MODEM_FS1 MODEM_FS2 MODEM_FSC MODEM_FSG MSADP SEC SSD UEFI_BS_NV UEFI_RT_NV"
 ANDR="aboot boot recovery misc modem cache persist persistent fsc fsg metadata ssd modemst1 modemst2 vendor system userdata"
 
+mkparts $PROV EFIESP Data
+expect 'lk-sha: no aboot partition' '^RESULT=FAIL:aboot partition not found' sh "$H" lk-sha
 mkparts $PROV EFIESP MainOS Data
 expect 'check-windows: MainOS and Data found' '^RESULT=OK:MainOS Data$' sh "$H" check-windows
 mkparts $PROV EFIESP Data
